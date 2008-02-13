@@ -254,20 +254,16 @@ int main(int argc, char *argv[])
     char *data;
     size_t size;
 
-    if (argc == 1)
+    if (argc > 2)
     {
-        path = "module.alo";
+        printf("Usage: alidump [<module>]\n");
+        return 0;
     }
-    else
-    if (argc != 2)
-    {
-        printf("Usage: alidump <module>\n");
-        exit(1);
-    }
-    else
-    {
+
+    if (argc == 2)
         path = argv[1];
-    }
+    else
+        path = "module.alo";
 
     /* Open file for reading */
     fp = fopen(path, "rb");

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "strings.h"
 #include "debug.h"
 #include "interpreter.h"
@@ -51,8 +52,7 @@ static ScapegoatTree st_functions = ST_INIT(
 
 /* Used when parsing a function definition: */
 static char *func_name;
-static char **func_params;
-static int func_nparam;
+static Array func_params = AR_INIT(sizeof(char*));
 static int func_nlocal;
 static Array func_body = AR_INIT(sizeof(Instruction));
 static Array inv_stack = AR_INIT(sizeof(int));
@@ -80,36 +80,19 @@ int yywrap()
     return 1;
 }
 
-void parser_init()
-{
-    Function *func;
-    const char **name;
-
-    func = builtin_functions;
-    name = builtin_names;
-    while (func->id != 0)
-    {
-        assert(*name != NULL);
-        ST_insert(&st_functions, *name, func);
-        ++func, ++name;
-    }
-    assert(*name == NULL);
-}
 
 void begin_function(const char *id)
 {
     assert(func_name == NULL);
 
     func_name   = strdup(id);
-    func_params = NULL;
-    func_nparam = func_nlocal = 0;
-    AR_clear(&func_body);
+    func_nlocal = 0;
 }
 
 void add_parameter(const char *id)
 {
-    func_params = realloc(func_params, (func_nparam + 1)*sizeof(char*));
-    func_params[func_nparam++] = strdup(id);
+    char *str = strdup(id);
+    AR_append(&func_params, &str);
 }
 
 void emit(int opcode, int arg)
@@ -138,18 +121,21 @@ void end_function()
 
     /* Create function definition */
     f.id     = AR_size(&ar_functions);
-    f.nparam = func_nparam;
+    f.nparam = AR_size(&func_params) - func_nlocal;
     f.ninstr = AR_size(&func_body) + func_nlocal;
     f.instrs = malloc(f.ninstr*sizeof(Instruction));
+
     /* Add local variables */
     for (n = 0; n < func_nlocal; ++n)
     {
         f.instrs[n].opcode   = OP_LLI;
         f.instrs[n].argument = 0;
     }
+
     /* Copy parsed instructions */
     memcpy(f.instrs + func_nlocal, AR_data(&func_body),
         AR_size(&func_body)*sizeof(Instruction));
+    AR_clear(&func_body);
 
     /* Add to function map and array */
     if (ST_insert(&st_functions, func_name, AR_append(&ar_functions, &f)))
@@ -161,10 +147,9 @@ void end_function()
     /* Free allocated resources */
     free(func_name);
     func_name = NULL;
-    for (n = 0; n < func_nparam + func_nlocal; ++n)
-        free(func_params[n]);
-    free(func_params);
-    func_params = NULL;
+    for (n = 0; n < AR_size(&func_params); ++n)
+        free(*(char**)AR_at(&func_params, n));
+    AR_clear(&func_params);
 }
 
 void patch_jmp(int offset)
@@ -194,17 +179,17 @@ int resolve_global(const char *str)
     return (long)value;
 }
 
-int resolve_local(const char *str)
+int resolve_local(const char *id)
 {
     int n;
 
-    for (n = 0; n < func_nparam + func_nlocal; ++n)
-        if (strcmp(str, func_params[n]) == 0)
+    for (n = 0; n < AR_size(&func_params); ++n)
+        if (strcmp(id, *(char**)AR_at(&func_params, n)) == 0)
             break;
-    if (n == func_nparam + func_nlocal)
+    if (n == AR_size(&func_params))
     {
-        func_params = realloc(func_params, (n + 1)*sizeof(char*));
-        func_params[n] = strdup(str);
+        char *str = strdup(id);
+        AR_append(&func_params, &str);
         ++func_nlocal;
     }
     return n;
@@ -232,10 +217,10 @@ int resolve_string(const char *str)
 
 int resolve_symbol(const char *str)
 {
-    const void *value = (void*)ST_size(&st_strings);
+    const void *value = (void*)ST_size(&st_symbols);
     const void *key   = str;
-    if (!ST_find_or_insert_entry(&st_strings, &key, &value))
-        AR_append(&ar_strings, &key);
+    if (!ST_find_or_insert_entry(&st_symbols, &key, &value))
+        AR_append(&ar_symbols, &key);
     return (long)value;
 }
 
@@ -554,9 +539,57 @@ void create_object_file()
     fclose(fp);
 }
 
-int main()
+void parser_create()
 {
-    parser_init();
+    Function *func;
+    const char **name;
+
+    func = builtin_functions;
+    name = builtin_names;
+    while (func->id != 0)
+    {
+        assert(*name != NULL);
+        ST_insert(&st_functions, *name, func);
+        ++func, ++name;
+    }
+    assert(*name == NULL);
+}
+
+void parser_destroy()
+{
+    if (func_name)
+        end_function();
+    AR_destroy(&ar_vars);
+    ST_destroy(&st_vars);
+    AR_destroy(&ar_properties);
+    ST_destroy(&st_properties);
+    AR_destroy(&ar_strings);
+    ST_destroy(&st_strings);
+    AR_destroy(&ar_symbols);
+    ST_destroy(&st_symbols);
+    AR_destroy(&ar_fragments);
+    ST_destroy(&st_fragments);
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc != 2)
+    {
+        printf("Usage: alic <source>\n");
+        return 0;
+    }
+
+    if (strcmp(argv[1], "-") != 0)
+    {
+        /* Open source file */
+        if (freopen(argv[1], "rt", stdin) == NULL)
+            fatal("Unable to open file \"%s\" for reading.");
+    }
+
+    parser_create();
     yyparse();
+    create_object_file();
+    parser_destroy();
+
     return 0;
 }

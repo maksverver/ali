@@ -678,21 +678,32 @@ Value builtin_write(State *state, Array *stack, int narg, Value *args)
     return ferror(stdout) ? val_false : val_true;
 }
 
-int main()
+int main(int argc, char *argv[])
 {
-    const char *filepath = "module.alo";
+    const char *path;
     FILE *fp;
     Module *mod;
     State *state;
     Array stack = AR_INIT(sizeof(Value));
 
-    fp = fopen(filepath, "rb");
+    if (argc > 2)
+    {
+        printf("Usage: ali [<module>]\n");
+        return 0;
+    }
+
+    if (argc == 2)
+        path = argv[1];
+    else
+        path = "module.alo";
+
+    fp = fopen(path, "rb");
     if (!fp)
-        fatal("Unable to open file \"%s\" for reading.", filepath);
+        fatal("Unable to open file \"%s\" for reading.", path);
 
     mod = load_module(fp);
     if (!mod)
-        fatal("Invalid module file: \"%s\".", filepath);
+        fatal("Invalid module file: \"%s\".", path);
     fclose(fp);
 
     state = make_state(mod);

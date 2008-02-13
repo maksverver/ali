@@ -29,7 +29,6 @@ int parse_fragment(const char *token, int type);
 void push_args();
 int pop_args();
 void count_arg();
-void create_object_file();
 
 %}
 
@@ -45,7 +44,7 @@ void create_object_file();
 
 %%
 
-start           : decls { create_object_file(); };
+start           : decls;
 
 decls           : decls decl
                 | ;
