@@ -1,0 +1,15 @@
+alic:
+ - Implement parsing of commands
+ - Implement tying entity declarations to symbols
+ - Implement referencing entities by symbol
+ - Implement dumping of debug data
+
+ali:
+ - Implement command parsing
+ - Implement interpreter loop
+ - Implement transcript logging
+ - Implement state saving/restoring
+
+alidump:
+ - Display command data
+

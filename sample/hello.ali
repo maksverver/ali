@@ -1,0 +1,14 @@
+function test($arg, $foo, $bar)
+{
+   if ($arg) {
+       return $foo;
+   } else {
+       return $bar;
+   }
+}
+
+function initialize()
+{
+    write(test(false, "Bonjour", "Hello"));
+    write(test(true, "World", "Monde"));
+}

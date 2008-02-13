@@ -1,0 +1,64 @@
+Integers are stored in network byte order (most-significant byte first).
+
+Length 
+  4   61 6C 69 6F   File identifier "alio"
+
+Module header
+  4   00 00 00 20   Header size
+  2   01 00         version number (1.0)
+  2   00 00         reserved (00 00)
+  4   xx xx xx xx   Number of verbs
+  4   xx xx xx xx   Number of prepositions
+  4   xx xx xx xx   Number of entities
+  4   xx xx xx xx   Number of properties per entity
+  4   xx xx xx xx   Number of global variables
+  4   xx xx xx xx   Initialization function (index into function table, or -1)
+
+Fragment table
+  4   xx xx xx xx   Fragment table size (S)
+  4   xx xx xx xx   Number of entries (E)
+  For each fragment:
+  4   TT II II II   TT: type referenced (0: verb, 1: preposition, 2: entity)
+                    II: index of referenced type
+  4   xx xx xx xx   Offset relative to start of fragment table
+                    Offset must be in range [8 + 8*E, S)
+  N                 ASCII encoded string data; strings are seperated by zero.
+  Fragment table must end with a zero byte and is padded to a 4-byte boundary.
+
+String table
+  4   xx xx xx xx   String table size (S)
+  4   xx xx xx xx   Number of entries (E)
+  For each entry:
+  4   xx xx xx xx   Offset relative to start of string table
+                    Offset must be in range [8 + 4*E, S)
+  N                 UTF-8 encoded string data; strings are seperated by zero.
+  String table must end with a zero byte and is padded to a 4-byte boundary.
+
+Function table
+  4   xx xx xx xx   Function table size (S)
+  4   xx xx xx xx   Number of function entries (E)
+  For each function:
+  4   00 00 00 xx   Number of arguments
+  4   xx xx xx xx   Offset relative to start of function table
+                    Offset must be in range [8 + 8*E, S)
+  Then:
+  4*N               32-bit encoded instructions
+                    Blocks are seperated by null-instructions (00 00 00 00)
+  For each instruction:
+  4   oo aa aa aa   Instruction with opcode "oo" and argument "aa".
+  Then:
+  4   00 00 00 00
+
+Command table
+  4   xx xx xx xx   Command table size (S)
+  4   xx xx xx xx   Number of command entries (E)
+  For each command:
+  4   FF FF AA AA   Form (F) and number of arguments (A).
+                    The following forms/arguments are supported:
+                    Form    Arguments
+                    ----    ---------
+                    0       1: Verb
+                    1       2: Verb Entity
+                    2       4: Verb Entity Preposition Entity
+  4*A xx xx xx xx   Reference to verb/preposition/entity
+  4   xx xx xx xx   Associated function
