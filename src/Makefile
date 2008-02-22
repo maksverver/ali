@@ -25,13 +25,13 @@ test-strings: test-strings.o $(LIB_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 syntax.yy.c: syntax.l grammar.tab.h
-	lex -t $< > $@
+	$(LEX) -t $< > $@
 
 grammar.tab.h: grammar.y
-	yacc -d $<
+	$(YACC) -b grammar -d $<
 
 grammar.tab.c: grammar.y
-	yacc -d $<
+	$(YACC) -b grammar -d $<
 
 ali: $(ALI_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^

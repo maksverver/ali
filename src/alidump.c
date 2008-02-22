@@ -279,7 +279,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Unable to seek in file!\n");
         exit(1);
     }
-    size = (size_t)ftello(fp);
+    size = (size_t)ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
     /* Allocate memory */
