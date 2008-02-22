@@ -191,8 +191,80 @@ static void dump_function_table(const char *data, size_t size)
 
 static void dump_command_table(const char *data, size_t size)
 {
+    int n, entries;
+    
     printf("\n--- command table (%d bytes) ---\n", size);
-    printf("TODO\n");
+    if (size < 8)
+    {
+        printf("Command table too short! (Should be at least 8 bytes.)\n");
+        return;
+    }
+    
+    entries = get_int32(data + 4);
+    printf("Number of entries: %d\n", entries);
+    data += 8, size -= 8;
+    
+    if (entries < 0)
+    {
+        printf("Invalid number of entries!\n");
+        return;
+    }
+    
+    for (n = 0; n < entries; ++n)
+    {
+        int form, args;
+        
+        if (size < 4)
+        {
+            printf("Command table entry truncated!\n");
+            return;
+        }
+        form = get_int16(data);
+        args = get_int16(data + 2);
+        if (size < 4 + 4*args + 4)
+        {
+            printf("Command table entry truncated!\n");
+            return;
+        }
+        switch (form)
+        {
+        case 0:
+            if (args != 1)
+            {
+                printf("Invalid number of arguments: %d (expected 1).\n", args);
+                return;
+            }
+            printf("\t%6d: verb=%d ", n, get_int32(data + 4));
+            break;
+            
+        case 1:
+            if (args != 2)
+            {
+                printf("Invalid number of arguments: %d (expected 2).\n", args);
+                return;
+            }
+            printf("\t%6d: verb=%d object=%d", n,
+                get_int32(data + 4), get_int32(data + 8));
+            break;
+            
+        case 2:
+            if (args != 4)
+            {
+                printf("Invalid number of arguments: %d (expected 4).\n", args);
+                return;
+            }
+            printf("\t%6d: verb=%d object=%d preposition=%d object=%d", n,
+                get_int32(data +  4), get_int32(data +  8),
+                get_int32(data + 12), get_int32(data + 16) );
+            break;
+
+        default:
+            printf("Unrecognized command (form %d, %d argumens)", form, args);
+        }
+        printf(" => function %d\n", get_int32(data + 4 + 4*args));
+        data += 4 + 4*args + 4;
+        size -= 4 + 4*args + 4;
+    }
 }
 
 static void dump(const char *data, size_t size)
