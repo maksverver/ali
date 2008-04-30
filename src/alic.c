@@ -13,6 +13,7 @@ extern char *yytext;
 extern int lineno;
 int yyparse();
 
+/* Default path */
 const char *output_path = "module.alo";
 
 static int num_verbs = 0, num_prepositions = 0, num_entities = 0;
@@ -50,12 +51,21 @@ static Array ar_functions = AR_INIT(sizeof(Function));
 static ScapegoatTree st_functions = ST_INIT(
     (EA_cmp)strcmp, (EA_dup)strdup, (EA_free)free, EA_no_dup, EA_no_free );
 
+/* Command table */
+static Array ar_commands = AR_INIT(sizeof(Command));
+
+
 /* Used when parsing a function definition: */
 static char *func_name;
 static Array func_params = AR_INIT(sizeof(char*));
 static int func_nlocal;
 static Array func_body = AR_INIT(sizeof(Instruction));
 static Array inv_stack = AR_INIT(sizeof(int));
+
+/* Used when parsing a command declaration */
+static Command command;
+/* func_body above is also reused */
+
 
 /* Built-in functions are declared here. */
 
@@ -72,7 +82,7 @@ static const char *builtin_names[] = {
 
 void yyerror(const char *str)
 {
-    fprintf(stderr,"Parse error on line %d: %s [%s]\n", lineno + 1, str, yytext);
+    fprintf(stderr, "Parse error on line %d: %s [%s]\n", lineno + 1, str, yytext);
 }
 
 int yywrap()
@@ -80,32 +90,17 @@ int yywrap()
     return 1;
 }
 
-
-void begin_function(const char *id)
-{
-    assert(func_name == NULL);
-
-    func_name   = strdup(id);
-    func_nlocal = 0;
-}
-
-void add_parameter(const char *id)
-{
-    char *str = strdup(id);
-    AR_append(&func_params, &str);
-}
-
+/* Emit an instruction (by adding it to the current function body) */
 void emit(int opcode, int arg)
 {
     Instruction i = { opcode, arg };
     AR_append(&func_body, &i);
 }
 
-void end_function()
+/* Terminates the current code block by ensuring func_body ends
+   with a RET instruction on all control paths. */
+static void terminate_code()
 {
-    Function f;
-    int n;
-
     /* Ensure function ends with return */
     /* NOTE: the if-clause below is not enough, because a code fragment like
        "if (false) { return; }" generates code that ends with a RET instruction,
@@ -118,38 +113,6 @@ void end_function()
         emit(OP_LLI, 0);
         emit(OP_RET, 0);
     }
-
-    /* Create function definition */
-    f.id     = AR_size(&ar_functions);
-    f.nparam = AR_size(&func_params) - func_nlocal;
-    f.ninstr = AR_size(&func_body) + func_nlocal;
-    f.instrs = malloc(f.ninstr*sizeof(Instruction));
-
-    /* Add local variables */
-    for (n = 0; n < func_nlocal; ++n)
-    {
-        f.instrs[n].opcode   = OP_LLI;
-        f.instrs[n].argument = 0;
-    }
-
-    /* Copy parsed instructions */
-    memcpy(f.instrs + func_nlocal, AR_data(&func_body),
-        AR_size(&func_body)*sizeof(Instruction));
-    AR_clear(&func_body);
-
-    /* Add to function map and array */
-    if (ST_insert(&st_functions, func_name, AR_append(&ar_functions, &f)))
-    {
-        error("Redefinition of function \"%s\".", func_name);
-        exit(1);
-    }
-
-    /* Free allocated resources */
-    free(func_name);
-    func_name = NULL;
-    for (n = 0; n < AR_size(&func_params); ++n)
-        free(*(char**)AR_at(&func_params, n));
-    AR_clear(&func_params);
 }
 
 void patch_jmp(int offset)
@@ -250,6 +213,201 @@ int parse_string(const char *token)
     result = resolve_string(str);
     free(str);
     return result;
+}
+
+void begin_function(const char *id)
+{
+    assert(func_name == NULL);
+
+    func_name   = strdup(id);
+    func_nlocal = 0;
+}
+
+void add_parameter(const char *id)
+{
+    char *str = strdup(id);
+    AR_append(&func_params, &str);
+}
+
+void end_function()
+{
+    void *stored;
+    Function f;
+    int n;
+
+    terminate_code();
+
+    /* Create function definition */
+    f.id     = AR_size(&ar_functions);
+    f.nparam = AR_size(&func_params) - func_nlocal;
+    f.ninstr = AR_size(&func_body) + func_nlocal;
+    f.instrs = malloc(f.ninstr*sizeof(Instruction));
+
+    /* Add local variables */
+    for (n = 0; n < func_nlocal; ++n)
+    {
+        f.instrs[n].opcode   = OP_LLI;
+        f.instrs[n].argument = 0;
+    }
+
+    /* Copy parsed instructions */
+    memcpy(f.instrs + func_nlocal, AR_data(&func_body),
+        AR_size(&func_body)*sizeof(Instruction));
+    AR_clear(&func_body);
+
+    /* Add to function map and array */
+    stored = AR_append(&ar_functions, &f);
+    if (func_name != NULL && ST_insert(&st_functions, func_name, stored))
+    {
+        error("Redefinition of function \"%s\".", func_name);
+        exit(1);
+    }
+
+    /* Free allocated resources */
+    free(func_name);
+    func_name = NULL;
+    for (n = 0; n < AR_size(&func_params); ++n)
+        free(*(char**)AR_at(&func_params, n));
+    AR_clear(&func_params);
+}
+
+/* Parses a <preposition> <entity> sequence. */
+static bool parse_command3(char *str)
+{
+    Fragment *f, *g;
+    char *sep;
+    bool ok;
+
+    sep = str;
+    while (*sep) ++sep;
+
+    for (;;)
+    {
+        do --sep; while (sep > str && *sep != ' ');
+        if (sep <= str) break;
+
+        *sep = '\0';
+        ok = ST_find(&st_fragments, str, (const void**)&f) &&
+             f->type == F_PREPOSITION &&
+             ST_find(&st_fragments, sep + 1, (const void**)&g) &&
+             g->type == F_ENTITY;
+        *sep = ' ';
+
+        if (ok)
+        {
+            /* FORM 2: <verb> <entity> <preposition> <entity> */
+            command.form = 2;
+            command.part[2] = f->id;
+            command.part[3] = g->id;
+            return true;
+        }
+        *sep = ' ';
+    }
+
+    return false;
+}
+
+/* Parses the part after "verb" in a command.
+   This either an entity reference, or an entity/preposition/reference. */
+static bool parse_command2(char *str)
+{
+    const Fragment *f;
+    char *sep;
+    bool ok;
+
+    if (ST_find(&st_fragments, str, (const void**)&f) && f->type == F_ENTITY)
+    {
+        /* FORM 1: <verb> <entity> */
+        command.form = 1;
+        command.part[1] = f->id;
+        return true;
+    }
+
+    sep = str;
+    while (*sep) ++sep;
+    for (;;)
+    {
+        do --sep; while (sep > str && *sep != ' ');
+        if (sep <= str) break;
+
+        *sep = '\0';
+        ok = ST_find(&st_fragments, str, (const void**)&f) &&
+             f->type == F_ENTITY &&
+             parse_command3(sep + 1);
+        *sep = ' ';
+
+        if (ok)
+        {
+            command.part[1] = f->id;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool parse_command(char *str)
+{
+    const Fragment *f;
+    char *sep;
+    bool ok;
+
+    if (ST_find(&st_fragments, str, (const void**)&f) && f->type == F_VERB)
+    {
+        /* FORM 0: <verb> */
+        command.form = 0;
+        command.part[0] = f->id;
+        return true;
+    }
+
+    sep = str;
+    while (*sep) ++sep;
+    for (;;)
+    {
+        do --sep; while (sep > str && *sep != ' ');
+        if (sep <= str) break;
+
+        *sep = '\0';
+        ok = ST_find(&st_fragments, str, (const void**)&f) &&
+             f->type == F_VERB &&
+             parse_command2(sep + 1);
+        *sep = ' ';
+
+        if (ok)
+        {
+            command.part[0] = f->id;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void begin_command(const char *str)
+{
+    char *command;
+
+    command = strdup(str);
+    normalize(command);
+    assert(command != NULL);
+    if (!parse_command(command))
+    {
+        fprintf(stderr, "Could not parse command: %s\n", command);
+        exit(1);
+    }
+    free(command);
+}
+
+void end_command()
+{
+    /* Terminate function */
+    func_name   = NULL;
+    func_nlocal = 0;
+    end_function();
+
+    /* Add to command array */
+    command.function = AR_size(&ar_functions) - 1;
+    AR_append(&ar_commands, &command);
 }
 
 void begin_verb()
@@ -504,8 +662,37 @@ static bool write_alio_functions(FILE *fp)
 
 static bool write_alio_commands(FILE *fp)
 {
-    /* TODO */
-    return write_int32(fp, 8) && write_int32(fp, 0);
+    int ncommands, total_args, n, m;
+    int form_to_nargs[3] = { 1, 2, 4 };
+    Command *cmd;
+
+    /* Compute and write command table size */
+    ncommands = AR_size(&ar_commands);
+    total_args = 0;
+    for (n = 0; n < ncommands; ++n)
+    {
+        cmd = (Command*)AR_at(&ar_commands, n);
+        total_args += form_to_nargs[cmd->form];
+    }
+    if (!write_int32(fp, 8 + 8*AR_size(&ar_commands) + 4*total_args))
+        return false;
+
+    /* Write all commands */
+    if (!write_int32(fp, AR_size(&ar_commands)))
+        return false;
+    for (n = 0; n < ncommands; ++n)
+    {
+        cmd = (Command*)AR_at(&ar_commands, n);
+        if (!write_int16(fp, cmd->form)) return false;
+        if (!write_int16(fp, form_to_nargs[cmd->form])) return false;
+        for (m = 0; m < form_to_nargs[cmd->form]; ++m)
+        {
+            if (!write_int32(fp, cmd->part[m])) return false;
+        }
+        if (!write_int32(fp, cmd->function)) return false;
+    }
+
+    return true;
 }
 
 static bool write_alio(FILE *fp)

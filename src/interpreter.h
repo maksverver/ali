@@ -13,6 +13,13 @@ typedef struct Function
     Instruction *instrs;
 } Function;
 
+typedef struct Command
+{
+    int         form;
+    int         part[4];
+    int         function;
+} Command;
+
 typedef enum FragmentType {
     F_VERB = 0, F_PREPOSITION = 1, F_ENTITY = 2
 } FragmentType;

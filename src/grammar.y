@@ -9,6 +9,8 @@ extern char *yytext;
 static int dest;
 
 /* Functions defined in alic.c */
+void begin_command(const char *str);
+void end_command();
 void begin_function(const char *id);
 void add_parameter(const char *id);
 void emit(int opcode, int arg);
@@ -62,8 +64,9 @@ declfunction    : FUNCTION
                   IDENTIFIER { begin_function(yytext); }
                   LPAREN optparameters RPAREN
                   block { end_function(); };
-declcommand     : COMMAND FRAGMENT block;
-
+declcommand     : COMMAND
+                  FRAGMENT { begin_command(yytext); }
+                  block { end_command(); };
 optparameters   : parameters
                 | ;
 parameters      : parameters COMMA parameter
