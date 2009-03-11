@@ -67,7 +67,7 @@ Builtin builtins[NBUILTIN] = {
    i.e. the arguments including the function are replaced by the
    result of the function.
 */
-void invoke(State *state, Array *stack, int args);
+void invoke(State *state, Array *stack, int nargs, int nret);
 
 void stack_dump(FILE *fp, Array *stack)
 {
@@ -281,9 +281,12 @@ static bool read_function_table(FILE *fp, Module *mod)
 
     for (n = 0; n < entries; ++n)
     {
-        int nparam, offset;
+        int nret, nparam, offset;
 
-        read_int24(fp); /* Skip reserved bytes */
+        read_int16(fp); /* Skip reserved bytes */
+        nret = read_int8(fp);
+        if (nret < 0)
+            return false;
         nparam = read_int8(fp);
         if (nparam < 0)
             return false;
@@ -295,6 +298,7 @@ static bool read_function_table(FILE *fp, Module *mod)
         mod->functions[n].id     = n;
         mod->functions[n].ninstr = 0;  /* this is set to a real value below */
         mod->functions[n].nparam = nparam;
+        mod->functions[n].nret   = nret;
         mod->functions[n].instrs = (Instruction*)mod->function_data + (offset - (8 + 8*entries))/4;
     }
 
@@ -401,10 +405,15 @@ failed:
 State *make_state(Module *mod)
 {
     State *state = malloc(sizeof(State));
+    int n;
 
     state->nvar = mod->num_entities*mod->num_properties + mod->num_globals;
     state->vars = malloc(state->nvar*sizeof(Value));
     state->mod  = mod;
+
+    /* Initialize global variables to nil */
+    for (n = 0; n < state->nvar; ++n)
+        state->vars[n] = val_nil;
 
     return state;
 }
@@ -563,13 +572,24 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
             break;
 
         case OP_CAL:
-            if (AR_size(stack) - stack_base < argument)
+            if (AR_size(stack) - stack_base < argument%256)
                 goto invalid;
-            invoke(state, stack, argument);
+            invoke(state, stack, argument%256, argument/256);
             break;
 
         case OP_RET:
-            goto returned;
+            switch (argument)
+            {
+            case 0:
+                return val_nil;
+            case 1:
+                if (AR_size(stack) <= stack_base)
+                    fatal("Empty stack at end of invocation!\n");
+                AR_pop(stack, &val);
+                return val;
+            default:
+                goto invalid;
+            }
 
         default:
             goto invalid;
@@ -581,32 +601,26 @@ invalid:
           "Stack height was %d (%d - %d).",
         i - (Instruction*)state->mod->function_data - 1, (i - 1)->opcode, (i - 1)->argument,
         AR_size(stack) - stack_base, AR_size(stack), stack_base);
-
-returned:
-    if (AR_size(stack) <= stack_base)
-        fatal("Empty stack at end of invocation!\n");
-
-    AR_pop(stack, &val);
-    return val;
+    return val_nil;
 }
 
-void invoke(State *state, Array *stack, int args)
+void invoke(State *state, Array *stack, int nargs, int nret)
 {
     int func_id;
     int stack_base;
     Value result;
 
-    if (args <= 0)
-        fatal("Too few arguments for function call (%d)", args);
+    if (nargs <= 0)
+        fatal("Too few arguments for function call (%d)", nargs);
 
-    if (args > AR_size(stack))
+    if (nargs > AR_size(stack))
         fatal("Too many arguments for function call (%d; stack height is %d).",
-            args, AR_size(stack));
+            nargs, AR_size(stack));
 
     /* Figure out which function to call */
-    func_id = (int)*(Value*)AR_at(stack, AR_size(stack) - args);
-    args -= 1;
-    stack_base = AR_size(stack) - args;
+    func_id = (int)*(Value*)AR_at(stack, AR_size(stack) - nargs);
+    nargs -= 1;
+    stack_base = AR_size(stack) - nargs;
 
     if (func_id < 0)
     {
@@ -614,7 +628,7 @@ void invoke(State *state, Array *stack, int args)
         if (func_id > NBUILTIN)
             fatal("Invalid system call (%d).", func_id);
         result = builtins[func_id](state, stack,
-            args, (Value*)AR_data(stack) + AR_size(stack) - args);
+            nargs, (Value*)AR_data(stack) + AR_size(stack) - nargs);
     }
     else
     if (func_id >= state->mod->nfunction)
@@ -627,21 +641,28 @@ void invoke(State *state, Array *stack, int args)
         const Function *f = &state->mod->functions[func_id];
 
         /* Check number of arguments and adjust stack frame if necessary */
-        if (args != f->nparam)
+        if (nargs != f->nparam)
         {
             warn("Function %d has %d parameters, but was invoked with %d arguments!",
-                func_id, f->nparam, args);
+                func_id, f->nparam, nargs);
 
             /* Add arguments if arguments < parameters */
-            for ( ; args < f->nparam; ++args)
+            for ( ; nargs < f->nparam; ++nargs)
                 AR_push(stack, &val_nil);
 
             /* Remove arguments if arguments > parameters */
-            for ( ; args > f->nparam; --args)
+            for ( ; nargs > f->nparam; --nargs)
                 AR_pop(stack, NULL);
         }
 
         result = exec_function(state, stack, f, stack_base);
+
+        /* Check number of return values */
+        if (nret != f->nret)
+        {
+            warn("Function %d returns %d values, but caller expects %d values!",
+                func_id, f->nret, nret);
+        }
     }
 
     AR_resize(stack, stack_base);
@@ -661,17 +682,26 @@ Value builtin_write(State *state, Array *stack, int narg, Value *args)
     int n, m;
     for (n = 0; n < narg; ++n)
     {
-        m = (int)args[n];
-        if (m < 0 || m >= state->mod->nstring)
-        {
-            error("write: invalid argument %d (string table has %d entries)",
-                m, state->mod->nstring);
-        }
-        else
+        if (args[n] == val_nil)
         {
             if (n > 0)
                 fputc(' ', stdout);
-            fputs(state->mod->strings[m], stdout);
+            fputs("(nil)", stdout);
+        }
+        else
+        {
+            m = (int)args[n];
+            if (m < 0 || m >= state->mod->nstring)
+            {
+                error("write: invalid argument %d (string table has %d entries)",
+                    m, state->mod->nstring);
+            }
+            else
+            {
+                if (n > 0)
+                    fputc(' ', stdout);
+                fputs(state->mod->strings[m], stdout);
+            }
         }
     }
     fputc('\n', stdout);
@@ -714,7 +744,7 @@ int main(int argc, char *argv[])
     {
         Value val = mod->init_func;
         AR_push(&stack, &val);
-        invoke(state, &stack, 1);
+        invoke(state, &stack, 1, 0);
     }
 
     return 0;

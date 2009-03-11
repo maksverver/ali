@@ -1,14 +1,16 @@
-alic:
+- check memory use with valgrind (interpreter only?)
+
+alic: (all of these can wait till later:)
+ - Check for procedure calls in expressions (these are forbidden!)
  - Check for multiply declared commands
- - Implement tying entity declarations to symbols
- - Implement referencing entities by symbol
  - Implement dumping of debug data
 
 ali:
  - Implement command parsing
  - Implement interpreter loop
  - Implement transcript logging
- - Implement state saving/restoring
+ - Implement state saving/restoring (just store the transcript?)
 
 alidump:
- - Display command data
+ - Allow user to select which parts of the module to print
+   (Very simple command line options?)

@@ -57,8 +57,8 @@
     OP1        1   1    Unary operator ID
     OP2        2   1    Binary operator ID
     OP3        3   1    Ternary operator ID
-    CAL        n   1    Number of arguments (n)
-    RET        1   0    -
+    CAL        n   m    256*m + n: number of argument (n) and return values (m)
+    RET        n   0    Number of arguments to return (n)
 */
 
 #endif /* ndef OPCODES_H_INCLUDED */

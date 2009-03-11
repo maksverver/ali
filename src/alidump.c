@@ -34,7 +34,7 @@ static void dump_header(const char *data, size_t size)
 {
     int version;
 
-    printf("\n--- header (%d bytes) ---\n", size);
+    printf("\n--- header (%d bytes) ---\n", (int)size);
     if (size < 32)
     {
         printf("Header too short! (Should be 32 bytes.)\n");
@@ -55,7 +55,7 @@ static void dump_fragment_table(const char *data, size_t size)
 {
     int entries, n;
 
-    printf("\n--- fragment table (%d bytes) ---\n", size);
+    printf("\n--- fragment table (%d bytes) ---\n", (int)size);
     if (size < 8)
     {
         printf("Fragment table too short! (Should be at least 8 bytes.)\n");
@@ -99,7 +99,7 @@ static void dump_string_table(const char *data, size_t size)
 {
     int n, entries;
 
-    printf("\n--- string table (%d bytes) ---\n", size);
+    printf("\n--- string table (%d bytes) ---\n", (int)size);
     if (size < 8)
     {
         printf("String table too short! (Should be at least 8 bytes.)\n");
@@ -139,7 +139,7 @@ static void dump_function_table(const char *data, size_t size)
 {
     int n, entries;
 
-    printf("\n--- function table (%d bytes) ---\n", size);
+    printf("\n--- function table (%d bytes) ---\n", (int)size);
     if (size < 8)
     {
         printf("Function table too short! (Should be at least 8 bytes.)\n");
@@ -157,14 +157,16 @@ static void dump_function_table(const char *data, size_t size)
     }
     for (n = 0; n < entries; ++n)
     {
-        int args   = *(data + 8*n + 3);
+        int narg   = *(data + 8*n + 3);
+        int nret   = *(data + 8*n + 2);
         int offset = get_int32(data + 8*n + 4);
 
         printf("\nFunction %d:\n"
                "\tArguments:         %6d\n"
+               "\tReturn values:     %6d\n"
                "\tCode offset:       %6d\n"
                "\tStart instruction: %6d\n",
-               n, args, offset, (offset - (8 + 8*entries))/4);
+               n, narg, nret, offset, (offset - (8 + 8*entries))/4);
 
         if (offset%4 != 0 || offset < 8 + 8*entries || offset > size)
             printf("Code offset is invalid!\n");
@@ -192,28 +194,28 @@ static void dump_function_table(const char *data, size_t size)
 static void dump_command_table(const char *data, size_t size)
 {
     int n, entries;
-    
-    printf("\n--- command table (%d bytes) ---\n", size);
+
+    printf("\n--- command table (%d bytes) ---\n", (int)size);
     if (size < 8)
     {
         printf("Command table too short! (Should be at least 8 bytes.)\n");
         return;
     }
-    
+
     entries = get_int32(data + 4);
     printf("Number of entries: %d\n", entries);
     data += 8, size -= 8;
-    
+
     if (entries < 0)
     {
         printf("Invalid number of entries!\n");
         return;
     }
-    
+
     for (n = 0; n < entries; ++n)
     {
-        int form, args;
-        
+        int form, args, guard, func;
+
         if (size < 4)
         {
             printf("Command table entry truncated!\n");
@@ -221,7 +223,7 @@ static void dump_command_table(const char *data, size_t size)
         }
         form = get_int16(data);
         args = get_int16(data + 2);
-        if (size < 4 + 4*args + 4)
+        if (size < 4 + 4*args + 8)
         {
             printf("Command table entry truncated!\n");
             return;
@@ -234,9 +236,9 @@ static void dump_command_table(const char *data, size_t size)
                 printf("Invalid number of arguments: %d (expected 1).\n", args);
                 return;
             }
-            printf("\t%6d: verb=%d ", n, get_int32(data + 4));
+            printf("\t%6d: verb=%d", n, get_int32(data + 4));
             break;
-            
+
         case 1:
             if (args != 2)
             {
@@ -246,7 +248,7 @@ static void dump_command_table(const char *data, size_t size)
             printf("\t%6d: verb=%d object=%d", n,
                 get_int32(data + 4), get_int32(data + 8));
             break;
-            
+
         case 2:
             if (args != 4)
             {
@@ -261,9 +263,15 @@ static void dump_command_table(const char *data, size_t size)
         default:
             printf("Unrecognized command (form %d, %d argumens)", form, args);
         }
-        printf(" => function %d\n", get_int32(data + 4 + 4*args));
-        data += 4 + 4*args + 4;
-        size -= 4 + 4*args + 4;
+        guard = get_int32(data + 4 + 4*args);
+        if (guard == -1)
+            printf(" (no guard)");
+        else
+            printf(" (guard %d)", guard);
+        func = get_int32(data + 4 + 4*args + 4);
+        printf(" => function %d\n", func);
+        data += 4 + 4*args + 8;
+        size -= 4 + 4*args + 8;
     }
 }
 

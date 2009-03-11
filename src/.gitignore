@@ -1,0 +1,7 @@
+*.o
+ali
+alic
+alidump
+grammar.tab.c
+grammar.tab.h
+syntax.yy.c

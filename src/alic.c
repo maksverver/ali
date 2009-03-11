@@ -70,10 +70,10 @@ static Command command;
 /* Built-in functions are declared here. */
 
 static Function builtin_functions[] = {
-    /* id  args */
-    {  -1,  0,  0, NULL },  /* quit */
-    {  -2,  1,  0, NULL },  /* write */
-    {   0,  0,  0, NULL } };
+    /* id  args  nret ninstr instrs */
+    {   -1,   0,   0,   0,   NULL },  /* quit */
+    {   -2,   1,   0,   0,   NULL },  /* write */
+    {    0,   0,   0,   0,   NULL } };
 
 static const char *builtin_names[] = {
     "quit", "write",
@@ -97,24 +97,9 @@ void emit(int opcode, int arg)
     AR_append(&func_body, &i);
 }
 
-/* Terminates the current code block by ensuring func_body ends
-   with a RET instruction on all control paths. */
-static void terminate_code()
-{
-    /* Ensure function ends with return */
-    /* NOTE: the if-clause below is not enough, because a code fragment like
-       "if (false) { return; }" generates code that ends with a RET instruction,
-       but this instruction is jumped over. */
-    /*
-    if (AR_empty(&func_body) ||
-        ((Instruction*)AR_last(&func_body))->opcode != OP_RET)
-    */
-    {
-        emit(OP_LLI, 0);
-        emit(OP_RET, 0);
-    }
-}
-
+/* Patch a jump opcode with target -1 by setting its target to the end of the
+   current instruction list, searching for jumps backward starting from the end
+   of the instructions + offset. (offset should <= 0) */
 void patch_jmp(int offset)
 {
     size_t pos = AR_size(&func_body);
@@ -147,8 +132,10 @@ int resolve_local(const char *id)
     int n;
 
     for (n = 0; n < AR_size(&func_params); ++n)
+    {
         if (strcmp(id, *(char**)AR_at(&func_params, n)) == 0)
             break;
+    }
     if (n == AR_size(&func_params))
     {
         char *str = strdup(id);
@@ -229,17 +216,20 @@ void add_parameter(const char *id)
     AR_append(&func_params, &str);
 }
 
-void end_function()
+void end_function(int func_nret)
 {
     void *stored;
     Function f;
     int n;
 
-    terminate_code();
+    /* Emit return instruction */
+    assert(func_nret == 0 || func_nret == 1);
+    emit(OP_RET, func_nret);
 
     /* Create function definition */
     f.id     = AR_size(&ar_functions);
     f.nparam = AR_size(&func_params) - func_nlocal;
+    f.nret   = func_nret;
     f.ninstr = AR_size(&func_body) + func_nlocal;
     f.instrs = malloc(f.ninstr*sizeof(Instruction));
 
@@ -247,7 +237,7 @@ void end_function()
     for (n = 0; n < func_nlocal; ++n)
     {
         f.instrs[n].opcode   = OP_LLI;
-        f.instrs[n].argument = 0;
+        f.instrs[n].argument = -1;
     }
 
     /* Copy parsed instructions */
@@ -385,17 +375,30 @@ static bool parse_command(char *str)
 
 void begin_command(const char *str)
 {
-    char *command;
+    char *fragment;
 
-    command = strdup(str);
-    normalize(command);
-    assert(command != NULL);
-    if (!parse_command(command))
+    fragment = strdup(str);
+    normalize(fragment);
+    assert(fragment != NULL);
+    if (!parse_command(fragment))
     {
-        fprintf(stderr, "Could not parse command: %s\n", command);
+        fprintf(stderr, "Could not parse command: %s\n", fragment);
         exit(1);
     }
-    free(command);
+    free(fragment);
+
+    command.guard = -1;
+}
+
+void end_guard()
+{
+    /* Terminate function */
+    func_name   = NULL;
+    func_nlocal = 0;
+    end_function(0);
+
+    /* Add guard to command */
+    command.guard = AR_size(&ar_functions) - 1;
 }
 
 void end_command()
@@ -403,10 +406,12 @@ void end_command()
     /* Terminate function */
     func_name   = NULL;
     func_nlocal = 0;
-    end_function();
+    end_function(0);
 
-    /* Add to command array */
+    /* Add function to command */
     command.function = AR_size(&ar_functions) - 1;
+
+    /* Add command to command array */
     AR_append(&ar_commands, &command);
 }
 
@@ -468,9 +473,10 @@ int parse_fragment(const char *token, int type)
     return result;
 }
 
-void push_args()
+void begin_call(const char *name)
 {
     int nargs = 0;
+    emit(OP_LLI, resolve_function(name));
     AR_push(&inv_stack, &nargs);
 }
 
@@ -480,12 +486,12 @@ void count_arg()
     ++*(int*)AR_last(&inv_stack);
 }
 
-int pop_args()
+void end_call(int nret)
 {
     int nargs;
     assert(AR_size(&inv_stack) > 0);
     AR_pop(&inv_stack, &nargs);
-    return nargs;
+    emit(OP_CAL, 256*nret + (1 + nargs));
 }
 
 static bool write_int8(FILE *fp, int i)
@@ -635,21 +641,25 @@ static bool write_alio_functions(FILE *fp)
     offset = 8 + 8*nfunction;
     for (n = 0; n < nfunction; ++n)
     {
-        if (!(write_int16(fp, 0) && write_int8(fp, 0) && write_int8(fp, functions[n].nparam)))
+        if (!(write_int16(fp, 0)))
+            return false;
+        if (!write_int8(fp, functions[n].nret))
+            return false;
+        if (!write_int8(fp, functions[n].nparam))
             return false;
         if (!write_int32(fp, offset))
             return false;
         offset += 4*(functions[n].ninstr + 1);
     }
 
-    /* Write function instructions*/
+    /* Write function instructions */
     for (n = 0; n < nfunction; ++n)
     {
         Instruction *ins = functions[n].instrs;
         for (i = 0; i < functions[n].ninstr; ++i)
         {
             assert(ins[i].opcode == (ins[i].opcode&255));
-            assert(ins[i].opcode >= -0x00800000 && ins[i].opcode <= 0x007fffff);
+            assert(ins[i].argument >= -0x00800000 && ins[i].argument <= 0x007fffff);
             if (!(write_int8(fp, ins[i].opcode) && write_int24(fp,ins[i].argument)))
                 return false;
         }
@@ -674,7 +684,7 @@ static bool write_alio_commands(FILE *fp)
         cmd = (Command*)AR_at(&ar_commands, n);
         total_args += form_to_nargs[cmd->form];
     }
-    if (!write_int32(fp, 8 + 8*AR_size(&ar_commands) + 4*total_args))
+    if (!write_int32(fp, 8 + 12*AR_size(&ar_commands) + 4*total_args))
         return false;
 
     /* Write all commands */
@@ -689,6 +699,7 @@ static bool write_alio_commands(FILE *fp)
         {
             if (!write_int32(fp, cmd->part[m])) return false;
         }
+        if (!write_int32(fp, cmd->guard)) return false;
         if (!write_int32(fp, cmd->function)) return false;
     }
 
@@ -744,8 +755,7 @@ void parser_create()
 
 void parser_destroy()
 {
-    if (func_name)
-        end_function();
+    if (func_name) end_function(0);
     AR_destroy(&ar_vars);
     ST_destroy(&st_vars);
     AR_destroy(&ar_properties);

@@ -11,14 +11,15 @@ int lineno;
 [A-Z][A-Z0-9]*([ ]+[A-Z][A-Z0-9]*)* return FRAGMENT;
 
 if                              return IF;
+then                            return THEN;
 else                            return ELSE;
 set                             return SET;
-return                          return RETURN;
 
 verb                            return VERB;
 entity                          return ENTITY;
 preposition                     return PREPOSITION;
 function                        return FUNCTION;
+procedure                       return PROCEDURE;
 command                         return COMMAND;
 
 =                               return EQUAL;
@@ -32,10 +33,10 @@ nil                             return NIL;
 
 \(                              return LPAREN;
 \)                              return RPAREN;
-\[                              return LSQRBR;
-\]                              return RSQRBR;
 \{                              return LCURBR;
 \}                              return RCURBR;
+\[                              return LSQRBR;
+\]                              return RSQRBR;
 
 \.                              return PERIOD;
 \,                              return COMMA;

@@ -3,21 +3,18 @@
 
 typedef struct Instruction
 {
-    int opcode;
-    int argument;
+    int opcode, argument;
 } Instruction;
 
 typedef struct Function
 {
-    int id, nparam, ninstr;
+    int id, nparam, nret, ninstr;
     Instruction *instrs;
 } Function;
 
 typedef struct Command
 {
-    int         form;
-    int         part[4];
-    int         function;
+    int form, part[4], guard, function;
 } Command;
 
 typedef enum FragmentType {

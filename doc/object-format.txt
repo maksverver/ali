@@ -38,7 +38,8 @@ Function table
   4   xx xx xx xx   Function table size (S)
   4   xx xx xx xx   Number of function entries (E)
   For each function:
-  4   00 00 00 xx   Number of arguments
+  4   00 00 RR AA   Number of arguments (A<128) and return values (R)
+                    A and R must be in range [0, 128)
   4   xx xx xx xx   Offset relative to start of function table
                     Offset must be in range [8 + 8*E, S)
   Then:
@@ -61,4 +62,5 @@ Command table
                     1       2: Verb Entity
                     2       4: Verb Entity Preposition Entity
   4*A xx xx xx xx   Reference to verb/preposition/entity
-  4   xx xx xx xx   Associated function
+  4   xx xx xx xx   Guard (index into function table, or -1)
+  4   xx xx xx xx   Body (index into function table)
