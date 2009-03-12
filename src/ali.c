@@ -43,10 +43,12 @@ typedef Value (*Builtin)(State *state, Array *stack, int narg, Value *args);
 
 Value builtin_quit(State *state, Array *stack, int narg, Value *args);
 Value builtin_write(State *state, Array *stack, int narg, Value *args);
+Value builtin_pause(State *state, Array *stack, int narg, Value *args);
+Value builtin_restart(State *state, Array *stack, int narg, Value *args);
 
-#define NBUILTIN 2
+#define NBUILTIN 4
 Builtin builtins[NBUILTIN] = {
-    builtin_quit, builtin_write };
+    builtin_quit, builtin_write, builtin_pause, builtin_restart };
 
 
 
@@ -402,18 +404,30 @@ failed:
     return NULL;
 }
 
-State *make_state(Module *mod)
+void restart(State *state, Array *stack)
 {
-    State *state = malloc(sizeof(State));
     int n;
-
-    state->nvar = mod->num_entities*mod->num_properties + mod->num_globals;
-    state->vars = malloc(state->nvar*sizeof(Value));
-    state->mod  = mod;
 
     /* Initialize global variables to nil */
     for (n = 0; n < state->nvar; ++n)
         state->vars[n] = val_nil;
+
+    /* Call initialization function (if we have one) */
+    if (state->mod->init_func != -1)
+    {
+        Value val = state->mod->init_func;
+        AR_push(stack, &val);
+        invoke(state, stack, 1, 0);
+    }
+}
+
+State *make_state(Module *mod)
+{
+    State *state = malloc(sizeof(State));
+
+    state->nvar = mod->num_entities*mod->num_properties + mod->num_globals;
+    state->vars = malloc(state->nvar*sizeof(Value));
+    state->mod  = mod;
 
     return state;
 }
@@ -708,6 +722,21 @@ Value builtin_write(State *state, Array *stack, int narg, Value *args)
     return ferror(stdout) ? val_false : val_true;
 }
 
+Value builtin_pause(State *state, Array *stack, int narg, Value *args)
+{
+    char line[1024];
+    fprintf(stdout, "Press Enter to continue...\n");
+    fflush(stdout);
+    fgets(line, sizeof(line), stdin);
+    return val_nil;
+}
+
+Value builtin_restart(State *state, Array *stack, int narg, Value *args)
+{
+    restart(state, stack);
+    return val_nil;
+}
+
 int main(int argc, char *argv[])
 {
     const char *path;
@@ -740,12 +769,11 @@ int main(int argc, char *argv[])
     if (!state)
         fatal("Could not create interpreter state.");
 
-    if (mod->init_func != -1)
-    {
-        Value val = mod->init_func;
-        AR_push(&stack, &val);
-        invoke(state, &stack, 1, 0);
-    }
+    restart(state, &stack);
+
+    free_state(state);
+    free_module(mod);
+    AR_destroy(&stack);
 
     return 0;
 }

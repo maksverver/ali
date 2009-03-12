@@ -25,7 +25,8 @@ int resolve_global(const char *str);
 int resolve_local(const char *str);
 int resolve_function(const char *id);
 int resolve_symbol(const char *str);
-int parse_string(const char *token);
+void parse_string(const char *token);
+int resolve_string();
 int resolve_fragment(const char *str, int type);
 int resolve_property(const char *str);
 void begin_verb();
@@ -101,7 +102,11 @@ statements      : statements statement
                 | ;
 statement       : ifst
                 | setst SEMICOLON
-                | proc_call SEMICOLON;
+                | proc_call SEMICOLON
+                | string SEMICOLON { emit(OP_LLI, resolve_function("write"));
+                                     emit(OP_LLI, resolve_string());
+                                     emit(OP_CAL, 2); };
+                ;
 
 ifst            : IF LPAREN expression RPAREN { emit(OP_JNP, -1); }
                   THEN block elseclause { patch_jmp(0); };
@@ -139,13 +144,16 @@ uexpr           : NOT baseexpr { emit(OP_OP1, OP1_NOT); }
 baseexpr        : NIL       { emit(OP_LLI, -1); }
                 | TRUE      { emit(OP_LLI, 1); }
                 | FALSE     { emit(OP_LLI, 0); }
-                | STRING    { emit(OP_LLI, parse_string(yytext)); }
+                | string    { emit(OP_LLI, resolve_string()); }
                 | INTEGER   { emit(OP_LLI, atoi(yytext)); }
                 | SYMBOL    { emit(OP_LLI, -2 - resolve_symbol(yytext)); }
                 | LPAREN expression RPAREN
                 | func_call
                 | entref
                 | varref;
+string          : string strtok
+                | strtok;
+strtok          : STRING { parse_string(yytext); };
 varref          : entref ATTRIBUTE { emit(OP_LDI, resolve_property(yytext)); }
                 | GLOBALVAR { emit(OP_LDG, resolve_global(yytext)); }
                 | LOCALVAR { emit(OP_LDL, resolve_local(yytext)); };

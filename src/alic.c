@@ -66,6 +66,10 @@ static Array inv_stack = AR_INIT(sizeof(int));
 static Command command;
 /* func_body above is also reused */
 
+/* Used when parsing strings */
+static char *str_buf = NULL;
+static size_t str_len = 0;
+
 
 /* Built-in functions are declared here. */
 
@@ -73,11 +77,12 @@ static Function builtin_functions[] = {
     /* id  args  nret ninstr instrs */
     {   -1,   0,   0,   0,   NULL },  /* quit */
     {   -2,   1,   0,   0,   NULL },  /* write */
+    {   -3,   0,   0,   0,   NULL },  /* restart */
+    {   -4,   0,   0,   0,   NULL },  /* pause */
     {    0,   0,   0,   0,   NULL } };
 
 static const char *builtin_names[] = {
-    "quit", "write",
-    NULL };
+    "quit", "write", "pause", "restart", NULL };
 
 
 void yyerror(const char *str)
@@ -156,12 +161,17 @@ int resolve_function(const char *id)
     return f->id;
 }
 
-int resolve_string(const char *str)
+int resolve_string()
 {
     const void *value = (void*)ST_size(&st_strings);
-    const void *key   = str;
+    const void *key   = str_buf;
+    if (key == NULL) yyerror("key NULL");
+    assert(key != NULL);
     if (!ST_find_or_insert_entry(&st_strings, &key, &value))
         AR_append(&ar_strings, &key);
+    free(str_buf);
+    str_buf = NULL;
+    str_len = 0;
     return (long)value;
 }
 
@@ -183,23 +193,24 @@ int resolve_property(const char *str)
     return (long)value;
 }
 
-int parse_string(const char *token)
+void parse_string(const char *token)
 {
-    char *str = strdup(token + 1);
-    char *p, *q;
-    int result;
-
+    /* Extend string buffer to accommodate token */
+    size_t token_len = strlen(token);
     assert(token[0] == '"');
-    assert(token[strlen(token) - 1] == '"');
-    str[strlen(str) - 1] = '\0';
+    assert(token[token_len - 1] == '"');
+    str_buf = realloc(str_buf, str_len + token_len - 2 + 1);
+    assert(str_buf != NULL);
 
-    /* Unescape */
-    for (p = q = str; *p; ++p)
-        *q++ = (*p == '\\' ? *++p : *p);
-    *q = '\0';
-    result = resolve_string(str);
-    free(str);
-    return result;
+    /* Add token to string buffer, unescaping in the process. */
+    size_t pos;
+    for (pos = 1; pos < token_len - 1; ++pos)
+    {
+        str_buf[str_len++] = token[token[pos] == '\\' ? ++pos : pos];
+    }
+
+    /* Terminate string */
+    str_buf[str_len] = '\0';
 }
 
 void begin_function(const char *id)
@@ -756,6 +767,11 @@ void parser_create()
 void parser_destroy()
 {
     if (func_name) end_function(0);
+    if (str_buf != NULL)
+    {
+        free(str_buf);
+        str_buf = NULL;
+    }
     AR_destroy(&ar_vars);
     ST_destroy(&st_vars);
     AR_destroy(&ar_properties);
