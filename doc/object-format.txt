@@ -23,7 +23,8 @@ Fragment table
   4   xx xx xx xx   Offset relative to start of fragment table
                     Offset must be in range [8 + 8*E, S)
   N                 ASCII encoded string data; strings are seperated by zero.
-  Fragment table must end with a zero byte and is padded to a 4-byte boundary.
+  Fragments must be ordered by string data first, then by type, then by id.
+  Fragment table must end with a zero byte and be padded to a 4-byte boundary.
 
 String table
   4   xx xx xx xx   String table size (S)

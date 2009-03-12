@@ -1,6 +1,7 @@
 #include "debug.h"
 #include "opcodes.h"
 #include "interpreter.h"
+#include "strings.h"
 #include "Array.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -683,9 +684,21 @@ void invoke(State *state, Array *stack, int nargs, int nret)
     *(Value*)AR_last(stack) = result;
 }
 
+void quit(State *state, Array *stack, int status)
+{
+    /* Clean up allocated memory */
+    Module *module = state->mod;
+    free_state(state);
+    free_module(module);
+    AR_destroy(stack);
+
+    /* Exit */
+    exit(status);
+}
+
 Value builtin_quit(State *state, Array *stack, int narg, Value *args)
 {
-    exit(narg == 0 ? 0 : (int)args[0]);
+    quit(state, stack, narg == 0 ? 0 : (int)args[0]);
 
     /* Should not get here. */
     return val_nil;
@@ -737,6 +750,36 @@ Value builtin_restart(State *state, Array *stack, int narg, Value *args)
     return val_nil;
 }
 
+void command_loop()
+{
+    char line[100];
+    for (;;)
+    {
+        fputs("> ", stdout);
+        fflush(stdout);
+        if (fgets(line, sizeof(line), stdin) == NULL)
+        {
+            fputc('\n', stdout);
+            break;
+        }
+
+        char *eol = strchr(line, '\n');
+        if (eol == NULL)
+        {
+            if (strlen(line) == sizeof(line) - 1)
+                warn("Input line was truncated!");
+        }
+        else
+        {
+            *eol = '\0';
+        }
+        normalize(line);
+
+        /* TODO: parse command (see alic for how it's done) */
+        printf("[%s]\n", line);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     const char *path;
@@ -771,9 +814,11 @@ int main(int argc, char *argv[])
 
     restart(state, &stack);
 
-    free_state(state);
-    free_module(mod);
-    AR_destroy(&stack);
+    command_loop();
+
+    warn("Unexpected end of input!");
+
+    quit(state, &stack, 1);
 
     return 0;
 }

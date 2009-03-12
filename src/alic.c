@@ -73,14 +73,6 @@ static size_t str_len = 0;
 
 /* Built-in functions are declared here. */
 
-static Function builtin_functions[] = {
-    /* id  args  nret ninstr instrs */
-    {   -1,   0,   0,   0,   NULL },  /* quit */
-    {   -2,   1,   0,   0,   NULL },  /* write */
-    {   -3,   0,   0,   0,   NULL },  /* restart */
-    {   -4,   0,   0,   0,   NULL },  /* pause */
-    {    0,   0,   0,   0,   NULL } };
-
 static const char *builtin_names[] = {
     "quit", "write", "pause", "restart", NULL };
 
@@ -152,13 +144,14 @@ int resolve_local(const char *id)
 
 int resolve_function(const char *id)
 {
-    const Function *f;
-    if (!ST_find(&st_functions, id, (const void **)&f))
+    const void *f_idx;
+    if (!ST_find(&st_functions, id, &f_idx))
     {
-        error("Reference to undeclared function \"%s\".", id);
+        error("Reference to undeclared function \"%s\" on line %d.",
+            id, lineno + 1);
         exit(1);
     }
-    return f->id;
+    return (long)f_idx;
 }
 
 int resolve_string()
@@ -229,7 +222,6 @@ void add_parameter(const char *id)
 
 void end_function(int func_nret)
 {
-    void *stored;
     Function f;
     int n;
 
@@ -257,12 +249,14 @@ void end_function(int func_nret)
     AR_clear(&func_body);
 
     /* Add to function map and array */
-    stored = AR_append(&ar_functions, &f);
-    if (func_name != NULL && ST_insert(&st_functions, func_name, stored))
+    if (func_name != NULL &&
+        ST_insert(&st_functions, func_name, (void*)AR_size(&ar_functions)))
     {
-        error("Redefinition of function \"%s\".", func_name);
+        error("Redefinition of function \"%s\" on line %d.",
+            func_name, lineno + 1);
         exit(1);
     }
+    AR_append(&ar_functions, &f);
 
     /* Free allocated resources */
     free(func_name);
@@ -275,7 +269,8 @@ void end_function(int func_nret)
 /* Parses a <preposition> <entity> sequence. */
 static bool parse_command3(char *str)
 {
-    Fragment *f, *g;
+    const void *f_idx, *g_idx;
+    const Fragment *f, *g;
     char *sep;
     bool ok;
 
@@ -288,10 +283,10 @@ static bool parse_command3(char *str)
         if (sep <= str) break;
 
         *sep = '\0';
-        ok = ST_find(&st_fragments, str, (const void**)&f) &&
-             f->type == F_PREPOSITION &&
-             ST_find(&st_fragments, sep + 1, (const void**)&g) &&
-             g->type == F_ENTITY;
+        ok = ST_find(&st_fragments, str, &f_idx) &&
+             (f = AR_at(&ar_fragments, (long)f_idx))->type == F_PREPOSITION &&
+             ST_find(&st_fragments, sep + 1, &g_idx) &&
+             (g = AR_at(&ar_fragments, (long)g_idx))->type == F_ENTITY;
         *sep = ' ';
 
         if (ok)
@@ -312,11 +307,13 @@ static bool parse_command3(char *str)
    This either an entity reference, or an entity/preposition/reference. */
 static bool parse_command2(char *str)
 {
-    const Fragment *f;
+    const void *f_idx;
+    Fragment *f;
     char *sep;
     bool ok;
 
-    if (ST_find(&st_fragments, str, (const void**)&f) && f->type == F_ENTITY)
+    if (ST_find(&st_fragments, str, &f_idx) &&
+        (f = AR_at(&ar_fragments, (long)f_idx))->type == F_ENTITY)
     {
         /* FORM 1: <verb> <entity> */
         command.form = 1;
@@ -332,8 +329,8 @@ static bool parse_command2(char *str)
         if (sep <= str) break;
 
         *sep = '\0';
-        ok = ST_find(&st_fragments, str, (const void**)&f) &&
-             f->type == F_ENTITY &&
+        ok = ST_find(&st_fragments, str, &f_idx) &&
+             (f = AR_at(&ar_fragments, (long)f_idx))->type == F_ENTITY &&
              parse_command3(sep + 1);
         *sep = ' ';
 
@@ -349,11 +346,13 @@ static bool parse_command2(char *str)
 
 static bool parse_command(char *str)
 {
+    const void *f_idx;
     const Fragment *f;
     char *sep;
     bool ok;
 
-    if (ST_find(&st_fragments, str, (const void**)&f) && f->type == F_VERB)
+    if (ST_find(&st_fragments, str, &f_idx) &&
+        (f = AR_at(&ar_fragments, (long)f_idx))->type == F_VERB)
     {
         /* FORM 0: <verb> */
         command.form = 0;
@@ -369,8 +368,8 @@ static bool parse_command(char *str)
         if (sep <= str) break;
 
         *sep = '\0';
-        ok = ST_find(&st_fragments, str, (const void**)&f) &&
-             f->type == F_VERB &&
+        ok = ST_find(&st_fragments, str, &f_idx) &&
+             (f = AR_at(&ar_fragments, (long)f_idx))->type == F_VERB &&
              parse_command2(sep + 1);
         *sep = ' ';
 
@@ -446,26 +445,33 @@ void begin_entity()
 
 void add_fragment(const char *str)
 {
-    Fragment *f = AR_append(&ar_fragments, &fragment);
-    f->str = str;
-    if (ST_insert_entry(&st_fragments, (const void**)&f->str, (const void**)&f))
+    const void *idx = (void*)AR_size(&ar_fragments);
+    fragment.str = str;  /* will be re-allocated after ST_insert_entry */
+    if (ST_insert_entry(&st_fragments, (const void**)&fragment.str, &idx))
     {
-        error("Reference to undeclared fragment \"%s\".", str);
+        error("Redeclaration of fragment \"%s\" on line %d.",
+            str, lineno + 1);
         exit(1);
     }
+    AR_append(&ar_fragments, &fragment);
 }
 
 int resolve_fragment(const char *str, int type)
 {
+    const void *f_idx;
     const Fragment *f;
-    if (!ST_find(&st_fragments, str, (const void **)&f))
+
+    if (!ST_find(&st_fragments, str, &f_idx))
     {
-        error("Reference to undeclared fragment \"%s\".", str);
+        error("Reference to undeclared fragment \"%s\" on line %d.",
+            str, lineno + 1);
         exit(1);
     }
+    f = AR_at(&ar_fragments, (long)f_idx);
     if (type != -1 && type != f->type)
     {
-        error("Fragment referenced by \"%s\" has wrong type.", str);
+        error("Fragment referenced by \"%s\" has wrong type on line %d.",
+            str, lineno + 1);
         exit(1);
     }
     return f->id;
@@ -531,8 +537,8 @@ static bool write_int32(FILE *fp, int i)
 
 static bool write_alio_header(FILE *fp)
 {
-    const Function *entry = NULL;
-    ST_find(&st_functions, "initialize", (const void **)&entry);
+    const void *init_idx = NULL;
+    ST_find(&st_functions, "initialize", &init_idx);
 
     return
         write_int32(fp, 32) &&      /* header size: 32 bytes */
@@ -543,7 +549,16 @@ static bool write_alio_header(FILE *fp)
         write_int32(fp, num_entities) &&
         write_int32(fp, AR_size(&ar_properties)) &&
         write_int32(fp, AR_size(&ar_vars)) &&
-        write_int32(fp, entry ? entry->id : -1);
+        write_int32(fp, init_idx == NULL ? -1 : (long)init_idx);
+}
+
+static int cmp_fragments(const void *a, const void *b)
+{
+    const Fragment *f = a, *g =b;
+    int d = strcmp(f->str, g->str);
+    if (d == 0) d = f->type - f->type;
+    if (d == 0) d = g->id - g->id;
+    return d;
 }
 
 static bool write_alio_fragments(FILE *fp)
@@ -554,6 +569,9 @@ static bool write_alio_fragments(FILE *fp)
 
     nfragment = (int)AR_size(&ar_fragments);
     fragments = (Fragment*)AR_data(&ar_fragments);
+
+    /* Sort fragments */
+    qsort(fragments, nfragment, sizeof(Fragment), &cmp_fragments);
 
     /* Compute size of table. */
     table_size = 8 + 8*nfragment;
@@ -750,18 +768,11 @@ void create_object_file()
 
 void parser_create()
 {
-    Function *func;
+    /* Register built-in functions */
     const char **name;
-
-    func = builtin_functions;
-    name = builtin_names;
-    while (func->id != 0)
-    {
-        assert(*name != NULL);
-        ST_insert(&st_functions, *name, func);
-        ++func, ++name;
-    }
-    assert(*name == NULL);
+    long func_id = 0;
+    for (name = builtin_names; *name != NULL; ++name)
+        ST_insert(&st_functions, *name, (void*)--func_id);
 }
 
 void parser_destroy()

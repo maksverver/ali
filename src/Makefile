@@ -1,6 +1,6 @@
 # Debug flags:
-CFLAGS=-Wall -g -O0 #-fmudflap
-LDFLAGS=-lm #-fmudflap -lmudflap
+CFLAGS=-Wall -g -O0 -fmudflap
+LDFLAGS=-lm -fmudflap -lmudflap
 
 # Release flags:
 #CFLAGS=-O2

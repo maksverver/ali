@@ -10,6 +10,10 @@ ali:
  - Implement interpreter loop
  - Implement transcript logging
  - Implement state saving/restoring (just store the transcript?)
+BUGS:
+ - The interpreter crashes on infinite recursion, or if the stack size is
+   increased endlessly.
+ - The interpreter will hang on infinite loops
 
 alidump:
  - Allow user to select which parts of the module to print
