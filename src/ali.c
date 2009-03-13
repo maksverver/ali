@@ -43,23 +43,37 @@ typedef struct Module
 
 } Module;
 
-typedef struct State
+typedef struct Variables
 {
-    struct Module *mod;
-    Value *vars;
-    int nvar;
-} State;
+    int nval;
+    Value *vals;
+} Variables;
 
-typedef Value (*Builtin)(State *state, Array *stack, int narg, Value *args);
+typedef struct Interpreter
+{
+    Module      *mod;
+    Variables   *vars;
+    Array       *stack;
+    bool        restart;
+    int         console_width;
+    int         print_column;
+} Interpreter;
 
-Value builtin_quit(State *state, Array *stack, int narg, Value *args);
-Value builtin_write(State *state, Array *stack, int narg, Value *args);
-Value builtin_pause(State *state, Array *stack, int narg, Value *args);
-Value builtin_restart(State *state, Array *stack, int narg, Value *args);
 
-#define NBUILTIN 4
+typedef Value (*Builtin)(Interpreter *I, int narg, Value *args);
+
+Value builtin_write   (Interpreter *I, int narg, Value *args);
+Value builtin_writeln (Interpreter *I, int narg, Value *args);
+Value builtin_writef  (Interpreter *I, int narg, Value *args);
+Value builtin_choice  (Interpreter *I, int narg, Value *args);
+Value builtin_pause   (Interpreter *I, int narg, Value *args);
+Value builtin_restart (Interpreter *I, int narg, Value *args);
+Value builtin_quit    (Interpreter *I, int narg, Value *args);
+
+#define NBUILTIN 7
 Builtin builtins[NBUILTIN] = {
-    builtin_quit, builtin_write, builtin_pause, builtin_restart };
+    builtin_write, builtin_writeln, builtin_writef, builtin_choice,
+    builtin_pause, builtin_restart, builtin_quit };
 
 
 
@@ -81,7 +95,7 @@ Builtin builtins[NBUILTIN] = {
    i.e. the arguments including the function number are replaced by the
    results of the function.
 */
-void invoke(State *state, Array *stack, int nargs, int nret);
+void invoke(Interpreter *I, int nargs, int nret);
 
 void stack_dump(FILE *fp, Array *stack)
 {
@@ -109,7 +123,6 @@ void stack_dump(FILE *fp, Array *stack)
         fprintf(fp, " %2d  ", n);
     fprintf(fp, "\n");
 }
-
 
 int read_int8(FILE *fp)
 {
@@ -468,38 +481,18 @@ failed:
     return NULL;
 }
 
-void restart(State *state, Array *stack)
+Variables *alloc_vars(Module *mod)
 {
-    int n;
-
-    /* Initialize global variables to nil */
-    for (n = 0; n < state->nvar; ++n)
-        state->vars[n] = val_nil;
-
-    /* Call initialization function (if we have one) */
-    if (state->mod->init_func != -1)
-    {
-        Value val = state->mod->init_func;
-        AR_push(stack, &val);
-        invoke(state, stack, 1, 0);
-    }
+    Variables *vars = malloc(sizeof(Variables));
+    vars->nval = mod->num_entities*mod->num_properties + mod->num_globals;
+    vars->vals = malloc(vars->nval*sizeof(Value));
+    return vars;
 }
 
-State *make_state(Module *mod)
+void free_vars(Variables *vars)
 {
-    State *state = malloc(sizeof(State));
-
-    state->nvar = mod->num_entities*mod->num_properties + mod->num_globals;
-    state->vars = malloc(state->nvar*sizeof(Value));
-    state->mod  = mod;
-
-    return state;
-}
-
-void free_state(State *state)
-{
-    free(state->vars);
-    free(state);
+    free(vars->vals);
+    free(vars);
 }
 
 void push_stack(Array *stack, Value value)
@@ -509,7 +502,23 @@ void push_stack(Array *stack, Value value)
     AR_push(stack, &value);
 }
 
-Value exec_function(State *state, Array *stack, const Function *f, int stack_base)
+void restart(Interpreter *I)
+{
+    int n;
+
+    /* Initialize global variables to nil */
+    for (n = 0; n < I->vars->nval; ++n)
+        I->vars->vals[n] = val_nil;
+
+    /* Call initialization function (if we have one) */
+    if (I->mod->init_func != -1)
+    {
+        push_stack(I->stack, (Value)I->mod->init_func);
+        invoke(I, 1, 0);
+    }
+}
+
+Value exec_function(Interpreter *I, const Function *f, int stack_base)
 {
     const Instruction *i, *j;
     Value val, val2;
@@ -525,74 +534,74 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
         switch(opcode)
         {
         case OP_LLI:
-            push_stack(stack, (Value)argument);
+            push_stack(I->stack, (Value)argument);
             break;
 
         case OP_POP:
-            if (argument < 0 || stack_base + argument > AR_size(stack))
+            if (argument < 0 || stack_base + argument > AR_size(I->stack))
                 goto invalid;
-            AR_resize(stack, AR_size(stack) - argument);
+            AR_resize(I->stack, AR_size(I->stack) - argument);
             break;
 
         case OP_LDL:
-            if (argument < 0 || stack_base + argument >= AR_size(stack))
+            if (argument < 0 || stack_base + argument >= AR_size(I->stack))
                 goto invalid;
-            push_stack(stack, *(Value*)AR_at(stack, stack_base + argument));
+            push_stack(I->stack, *(Value*)AR_at(I->stack, stack_base + argument));
             break;
 
         case OP_STL:
-            if (argument < 0 || stack_base + argument >= AR_size(stack) - 1)
+            if (argument < 0 || stack_base + argument >= AR_size(I->stack) - 1)
                 goto invalid;
-            AR_pop(stack, &val);
-            *(Value*)AR_at(stack, stack_base + argument) = val;
+            AR_pop(I->stack, &val);
+            *(Value*)AR_at(I->stack, stack_base + argument) = val;
             break;
 
         case OP_LDG:
-            if (argument < 0 || argument >= state->nvar)
+            if (argument < 0 || argument >= I->vars->nval)
                 goto invalid;
-            push_stack(stack, state->vars[argument]);
+            push_stack(I->stack, I->vars->vals[argument]);
             break;
 
         case OP_STG:
-            if (argument < 0 || argument >= state->nvar)
+            if (argument < 0 || argument >= I->vars->nval)
                 goto invalid;
-            AR_pop(stack, &state->vars[argument]);
+            AR_pop(I->stack, &I->vars->vals[argument]);
             break;
 
         case OP_LDI:
             {
                 int index;
-                if (AR_size(stack) - stack_base < 1)
+                if (AR_size(I->stack) - stack_base < 1)
                     goto invalid;
-                AR_pop(stack, &val);
-                index = state->mod->num_globals
-                      + state->mod->num_properties*(int)val
+                AR_pop(I->stack, &val);
+                index = I->mod->num_globals
+                      + I->mod->num_properties*(int)val
                       + argument;
-                if (index < 0 || index >= state->nvar)
+                if (index < 0 || index >= I->vars->nval)
                     goto invalid;
-                push_stack(stack, state->vars[index]);
+                push_stack(I->stack, I->vars->vals[index]);
             } break;
 
         case OP_STI:
             {
                 int index;
                 Value *v;
-                if (AR_size(stack) - stack_base < 2)
+                if (AR_size(I->stack) - stack_base < 2)
                     goto invalid;
-                v = (Value*)AR_at(stack, AR_size(stack) - 2);
-                index = state->mod->num_globals
-                      + state->mod->num_properties*(int)v[0]
+                v = (Value*)AR_at(I->stack, AR_size(I->stack) - 2);
+                index = I->mod->num_globals
+                      + I->mod->num_properties*(int)v[0]
                       + argument;
-                if (index < 0 || index >= state->nvar)
+                if (index < 0 || index >= I->vars->nval)
                     goto invalid;
-                state->vars[index] = v[1];
-                AR_resize(stack, AR_size(stack) - 2);
+                I->vars->vals[index] = v[1];
+                AR_resize(I->stack, AR_size(I->stack) - 2);
             } break;
 
         case OP_JNP:
-            if (AR_size(stack) - stack_base < 1)
+            if (AR_size(I->stack) - stack_base < 1)
                 goto invalid;
-            AR_pop(stack, &val);
+            AR_pop(I->stack, &val);
             /* FIXME: is (val != val_false && val != val_nil) a better criterion? */
             if (val > 0)
                 break;
@@ -605,9 +614,9 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
             break;
 
         case OP_OP1:
-            if (AR_size(stack) - stack_base < 1)
+            if (AR_size(I->stack) - stack_base < 1)
                 goto invalid;
-            AR_pop(stack, &val);
+            AR_pop(I->stack, &val);
             switch (argument)
             {
             case OP1_NOT:
@@ -617,14 +626,14 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
             default:
                 goto invalid;
             }
-            AR_push(stack, &val);
+            AR_push(I->stack, &val);
             break;
 
         case OP_OP2:
-            if (AR_size(stack) - stack_base < 2)
+            if (AR_size(I->stack) - stack_base < 2)
                 goto invalid;
-            AR_pop(stack, &val);
-            AR_pop(stack, &val2);
+            AR_pop(I->stack, &val);
+            AR_pop(I->stack, &val2);
             switch (argument)
             {
             case OP2_AND:
@@ -642,11 +651,11 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
             default:
                 goto invalid;
             }
-            AR_push(stack, &val);
+            AR_push(I->stack, &val);
             break;
 
         case OP_OP3:
-            if (AR_size(stack) - stack_base < 3)
+            if (AR_size(I->stack) - stack_base < 3)
                 goto invalid;
             switch (argument)
             {
@@ -656,9 +665,9 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
             break;
 
         case OP_CAL:
-            if (AR_size(stack) - stack_base < argument%256)
+            if (AR_size(I->stack) - stack_base < argument%256)
                 goto invalid;
-            invoke(state, stack, argument%256, argument/256);
+            invoke(I, argument%256, argument/256);
             break;
 
         case OP_RET:
@@ -667,9 +676,9 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
             case 0:
                 return val_nil;
             case 1:
-                if (AR_size(stack) <= stack_base)
+                if (AR_size(I->stack) <= stack_base)
                     fatal("Empty stack at end of invocation!\n");
-                AR_pop(stack, &val);
+                AR_pop(I->stack, &val);
                 return val;
             default:
                 goto invalid;
@@ -683,12 +692,12 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
 invalid:
     fatal("Instruction %d (opcode %d, argument: %d) could not be executed.\n"
           "Stack height was %d (%d - %d).",
-        i - (Instruction*)state->mod->function_data - 1, (i - 1)->opcode, (i - 1)->argument,
-        AR_size(stack) - stack_base, AR_size(stack), stack_base);
+        i - (Instruction*)I->mod->function_data - 1, (i - 1)->opcode, (i - 1)->argument,
+        AR_size(I->stack) - stack_base, AR_size(I->stack), stack_base);
     return val_nil;
 }
 
-void invoke(State *state, Array *stack, int nargs, int nret)
+void invoke(Interpreter *I, int nargs, int nret)
 {
     int func_id;
     int stack_base;
@@ -703,37 +712,37 @@ void invoke(State *state, Array *stack, int nargs, int nret)
     if (nret > 1)
         fatal("Too many return values for function call (%d)", nret);
 
-    if (nargs > AR_size(stack))
+    if (nargs > AR_size(I->stack))
         fatal("Too many arguments for function call (%d; stack height is %d).",
-            nargs, AR_size(stack));
+            nargs, AR_size(I->stack));
 
     /* This currently can't happen since nargs >= 1 and nret <= 1:
-    if (AR_size(stack) - nargs + nret > MAX_STACK_SIZE)
+    if (AR_size(I->stack) - nargs + nret > MAX_STACK_SIZE)
         fatal("Stack limit exceeded when invoking a function.");
     */
 
     /* Figure out which function to call */
-    func_id = (int)*(Value*)AR_at(stack, AR_size(stack) - nargs);
+    func_id = (int)*(Value*)AR_at(I->stack, AR_size(I->stack) - nargs);
     nargs -= 1;
-    stack_base = AR_size(stack) - nargs;
+    stack_base = AR_size(I->stack) - nargs;
 
     if (func_id < 0)
     {
         func_id = -func_id - 1;
         if (func_id > NBUILTIN)
             fatal("Invalid system call (%d).", func_id);
-        result = builtins[func_id](state, stack,
-            nargs, (Value*)AR_data(stack) + AR_size(stack) - nargs);
+        result = builtins[func_id](I, nargs,
+            (Value*)AR_data(I->stack) + AR_size(I->stack) - nargs);
     }
     else
-    if (func_id >= state->mod->nfunction)
+    if (func_id >= I->mod->nfunction)
     {
         error("Non-existent function %d invoked!", func_id);
         result = val_nil;
     }
     else
     {
-        const Function *f = &state->mod->functions[func_id];
+        const Function *f = &I->mod->functions[func_id];
 
         /* Check number of arguments and adjust stack frame if necessary */
         if (nargs != f->nparam)
@@ -743,14 +752,14 @@ void invoke(State *state, Array *stack, int nargs, int nret)
 
             /* Add arguments if arguments < parameters */
             for ( ; nargs < f->nparam; ++nargs)
-                AR_push(stack, &val_nil);
+                AR_push(I->stack, &val_nil);
 
             /* Remove arguments if arguments > parameters */
             for ( ; nargs > f->nparam; --nargs)
-                AR_pop(stack, NULL);
+                AR_pop(I->stack, NULL);
         }
 
-        result = exec_function(state, stack, f, stack_base);
+        result = exec_function(I, f, stack_base);
 
         /* Check number of return values */
         if (nret != f->nret)
@@ -760,33 +769,15 @@ void invoke(State *state, Array *stack, int nargs, int nret)
         }
     }
 
-    /* Remove arguments and function call */
-    AR_resize(stack, stack_base - 1);
+    /* Remove arguments and function id */
+    AR_resize(I->stack, stack_base - 1);
+
+    /* Add return value, if requested */
     if (nret == 1)
-        AR_push(stack, &result);
+        AR_push(I->stack, &result);
 }
 
-void quit(State *state, Array *stack, int status)
-{
-    /* Clean up allocated memory */
-    Module *module = state->mod;
-    free_state(state);
-    free_module(module);
-    AR_destroy(stack);
-
-    /* Exit */
-    exit(status);
-}
-
-Value builtin_quit(State *state, Array *stack, int narg, Value *args)
-{
-    quit(state, stack, narg == 0 ? 0 : (int)args[0]);
-
-    /* Should not get here. */
-    return val_nil;
-}
-
-Value builtin_write(State *state, Array *stack, int narg, Value *args)
+Value builtin_write(Interpreter *I, int narg, Value *args)
 {
     int n, m;
     for (n = 0; n < narg; ++n)
@@ -800,24 +791,42 @@ Value builtin_write(State *state, Array *stack, int narg, Value *args)
         else
         {
             m = (int)args[n];
-            if (m < 0 || m >= state->mod->nstring)
+            if (m < 0 || m >= I->mod->nstring)
             {
                 error("write: invalid argument %d (string table has %d entries)",
-                    m, state->mod->nstring);
+                    m, I->mod->nstring);
             }
             else
             {
                 if (n > 0)
                     fputc(' ', stdout);
-                fputs(state->mod->strings[m], stdout);
+                fputs(I->mod->strings[m], stdout);
             }
         }
     }
     fputc('\n', stdout);
-    return ferror(stdout) ? val_false : val_true;
+    return val_nil;
 }
 
-Value builtin_pause(State *state, Array *stack, int narg, Value *args)
+Value builtin_writeln(Interpreter *I, int narg, Value *args)
+{
+    /* TODO */
+    return val_nil;
+}
+
+Value builtin_writef(Interpreter *I, int narg, Value *args)
+{
+    /* TODO */
+    return val_nil;
+}
+
+Value builtin_choice(Interpreter *I, int narg, Value *args)
+{
+    /* TODO */
+    return val_nil;
+}
+
+Value builtin_pause(Interpreter *I, int narg, Value *args)
 {
     char line[1024];
     fputs("Press Enter to continue...\n", stdout);
@@ -826,10 +835,27 @@ Value builtin_pause(State *state, Array *stack, int narg, Value *args)
     return val_nil;
 }
 
-Value builtin_restart(State *state, Array *stack, int narg, Value *args)
+Value builtin_restart(Interpreter *I, int narg, Value *args)
 {
-    restart(state, stack);
+    I->restart = true;
     return val_nil;
+}
+
+__attribute__((__noreturn__))
+void quit(Interpreter *I, int status)
+{
+    /* Clean up allocated memory */
+    free_vars(I->vars);
+    free_module(I->mod);
+    AR_destroy(I->stack);
+
+    /* Exit */
+    exit(status);
+}
+
+Value builtin_quit(Interpreter *I, int narg, Value *args)
+{
+    quit(I, 0);
 }
 
 /* Returns the index of a fragment of a matching fragment. */
@@ -922,15 +948,15 @@ static bool parse_command(const Module *mod, char *line, Command *cmd)
     return false;
 }
 
-static bool evaluate_function(State *state, Array *stack, int func)
+static bool evaluate_function(Interpreter *I, int func)
 {
-    if (func < 0 || func >= state->mod->nfunction)
+    if (func < 0 || func >= I->mod->nfunction)
         return false;
 
-    Value val = func;
-    AR_push(stack, &val);
-    invoke(state, stack, 1, 1);
-    AR_pop(stack, &val);
+    Value val;
+    push_stack(I->stack, (Value)func);
+    invoke(I, 1, 1);
+    AR_pop(I->stack, &val);
     return val > 0;
 }
 
@@ -964,31 +990,28 @@ static int find_first_matching_command(const Module *mod, const Command *cmd)
     return lo;
 }
 
-static void process_command(State *state, Array *stack, char *line)
+static void process_command(Interpreter *I, char *line)
 {
     Command cmd;
-    if (!parse_command(state->mod, line, &cmd))
+    if (!parse_command(I->mod, line, &cmd))
     {
         printf("I didn't understand that.\n");
         return;
     }
 
     int num_matched = 0, num_active = 0, n, cmd_func;
-    for ( n = find_first_matching_command(state->mod, &cmd);
-          n < state->mod->ncommand; ++n )
+    for (n = find_first_matching_command(I->mod, &cmd);
+         n < I->mod->ncommand; ++n)
     {
-        const Command *command = &state->mod->commands[n];
+        const Command *command = &I->mod->commands[n];
         if (cmp_commands(command, &cmd) != 0)
             break;
 
         ++num_matched;
-        if (command->guard < 0 ||
-            evaluate_function(state, stack, command->guard))
+        if (command->guard < 0 || evaluate_function(I, command->guard))
         {
             if (++num_active == 1)
-            {
                 cmd_func = command->function;
-            }
         }
     }
 
@@ -1011,25 +1034,29 @@ static void process_command(State *state, Array *stack, char *line)
     }
 
     /* Invoke the command function */
-    Value val = cmd_func;
-    AR_push(stack, &val);
-    invoke(state, stack, 1, 0);
+    push_stack(I->stack, (Value)cmd_func);
+    invoke(I, 1, 0);
 
     /* TODO: save action to transcript? */
 }
 
-void command_loop(State *state, Array *stack)
+void command_loop(Interpreter *I)
 {
     char line[1024];
     for (;;)
     {
-        fputs("> ", stdout);
-        fflush(stdout);
-        if (fgets(line, sizeof(line), stdin) == NULL)
+        if (I->restart)
         {
-            fputc('\n', stdout);
-            break;
+            restart(I);
+            I->restart = false;
         }
+
+        fputs("\n> ", stdout);
+        fflush(stdout);
+        char *line_ptr = fgets(line, sizeof(line), stdin);
+        fputc('\n', stdout);
+        if (line_ptr == NULL)
+            break;
 
         char *eol = strchr(line, '\n');
         if (eol == NULL)
@@ -1041,18 +1068,19 @@ void command_loop(State *state, Array *stack)
         {
             *eol = '\0';
         }
+
         normalize(line);
-        process_command(state, stack, line);
+        I->print_column = 0;
+        process_command(I, line);
     }
 }
 
 int main(int argc, char *argv[])
 {
+    Interpreter interpreter;
+    Array stack = AR_INIT(sizeof(Value));
     const char *path;
     FILE *fp;
-    Module *mod;
-    State *state;
-    Array stack = AR_INIT(sizeof(Value));
 
     if (argc > 2)
     {
@@ -1060,31 +1088,31 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    if (argc == 2)
-        path = argv[1];
-    else
-        path = "module.alo";
-
+    /* Attempt to load executable module */
+    path = (argc == 2 ? argv[1] :"module.alo");
     fp = fopen(path, "rb");
     if (!fp)
         fatal("Unable to open file \"%s\" for reading.", path);
-
-    mod = load_module(fp);
-    if (!mod)
-        fatal("Invalid module file: \"%s\".", path);
+    interpreter.mod = load_module(fp);
     fclose(fp);
+    if (interpreter.mod == NULL)
+        fatal("Invalid module file: \"%s\".", path);
 
-    state = make_state(mod);
-    if (!state)
+    /* Allocate stack */
+    interpreter.stack = &stack;
+
+    /* Allocate variables */
+    interpreter.vars = alloc_vars(interpreter.mod);
+    if (interpreter.vars == NULL)
         fatal("Could not create interpreter state.");
 
-    restart(state, &stack);
+    /* Allocate rest of interpreter */
+    interpreter.restart       = true;
+    interpreter.console_width = 80;
+    interpreter.print_column  =  0;
 
-    command_loop(state, &stack);
-
+    /* Initialize vars */
+    command_loop(&interpreter);
     warn("Unexpected end of input!");
-
-    quit(state, &stack, 1);
-
-    return 0;
+    quit(&interpreter, 1);
 }

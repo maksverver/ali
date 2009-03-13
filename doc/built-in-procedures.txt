@@ -1,0 +1,25 @@
+
+write(..)       Write each argument string to the screen, seperated by spaces.
+
+writeln(..)     As above, but ends the current line.
+
+writef(..)      Write formatted output. The first argument is a format string,
+                which may contain the following special sequences:
+                    %%  is replaced by %
+                    %s  is replaced by the next argument formatted as a string
+                    %i  is replaced by the next argument formatted as a
+                        decimal integer
+                    %d  is equivalent to %i
+
+
+choice(..)      Takes two or more string arguments. The first argument is the
+                query to display, the rest are the options. The result is one
+                of the option arguments.
+
+pause()         Waits for user input before continuing.
+
+quit()          End the game. Does not return.
+
+restart()       Restarts the module, by reseting all variables to nil and
+                calling the initialization function again. Takes effect after
+                all current invocations have completed.

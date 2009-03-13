@@ -2,14 +2,16 @@
 
 alic: (all of these can wait till later:)
  - Check for procedure calls in expressions (these are forbidden!)
- - Check for multiply declared commands
- - Implement dumping of debug data
  - Support for forward declarations of functions/procedures?
 
 ali:
- - Better line reading (readline? How to do portably?)
+ - Implement line wrapping when printing. Ensure input/output are seperated by
+   a blank line. See built-in-procedures.txt for details.
+ - Better line reading (readline? libedit? How to do portably?)
+ - Port to Windows
  - Implement transcript logging
    include time, commands, output
  - Implement state saving/restoring (just store the transcript?)
-BUGS:
- - The interpreter will hang on (nearly) infinite loops
+Low priority:
+ - Use zlib to read gzip compressed module file
+ - BUG: the interpreter will hang on (nearly) infinite loops

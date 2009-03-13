@@ -68,10 +68,8 @@ static size_t str_len = 0;
 
 
 /* Built-in functions are declared here. */
-
 static const char *builtin_names[] = {
-    "quit", "write", "pause", "restart", NULL };
-
+    "write", "writeln", "writef", "choice", "pause", "restart", "quit", NULL };
 
 void yyerror(const char *str)
 {
@@ -140,12 +138,15 @@ int resolve_local(const char *id)
 
 int resolve_function(const char *id)
 {
+    /* Look up registered function */
     const void *f_idx;
     if (ST_find(&st_functions, id, &f_idx))
     {
         return (long)f_idx;
     }
-    if (strcmp(id, func_name) == 0)
+
+    /* Recognize current function name to allow recursive calls to be made */
+    if (func_name != NULL && strcmp(id, func_name) == 0)
     {
         return AR_size(&ar_functions);
     }
@@ -199,10 +200,23 @@ void parse_string(const char *token)
     size_t pos;
     for (pos = 1; pos < token_len - 1; ++pos)
     {
-        str_buf[str_len++] = token[token[pos] == '\\' ? ++pos : pos];
+        if (token[pos] != '\\')
+        {
+            str_buf[str_len++] = token[pos];
+        }
+        else
+        {
+            char ch;
+            switch (token[++pos])
+            {
+            case 'n': ch = '\n'; break;
+            default: ch = token[pos]; break;
+            }
+            str_buf[str_len++] = ch;
+        }
     }
 
-    /* Terminate string */
+    /* Zero-terminate string */
     str_buf[str_len] = '\0';
 }
 
