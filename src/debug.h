@@ -7,6 +7,7 @@
 void info(const char *fmt, ...);
 void warn(const char *fmt, ...);
 void error(const char *fmt, ...);
+__attribute__((__noreturn__))
 void fatal(const char *fmt, ...);
 void *debug_malloc(size_t size, const char *file, int line);
 

@@ -8,6 +8,12 @@
 #include <stdbool.h>
 #include <string.h>
 
+/* Limit on the size of the script's execution stack.
+   Useful to prevent infinite recusion, but also necessary since the interpreter
+   uses the C stack to invoke functions, so setting this value too high can
+   crash the interpreter. */
+#define MAX_STACK_SIZE 1000
+
 typedef int Value;
 static const Value val_true = 1, val_false = 0, val_nil = -1;
 
@@ -496,6 +502,13 @@ void free_state(State *state)
     free(state);
 }
 
+void push_stack(Array *stack, Value value)
+{
+    if (AR_size(stack) == MAX_STACK_SIZE)
+        fatal("Stack limit exceeded when pushing a value.");
+    AR_push(stack, &value);
+}
+
 Value exec_function(State *state, Array *stack, const Function *f, int stack_base)
 {
     const Instruction *i, *j;
@@ -512,8 +525,7 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
         switch(opcode)
         {
         case OP_LLI:
-            val = (Value)argument;
-            AR_push(stack, &val);
+            push_stack(stack, (Value)argument);
             break;
 
         case OP_POP:
@@ -525,8 +537,7 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
         case OP_LDL:
             if (argument < 0 || stack_base + argument >= AR_size(stack))
                 goto invalid;
-            val = *(Value*)AR_at(stack, stack_base + argument);
-            AR_push(stack, &val);
+            push_stack(stack, *(Value*)AR_at(stack, stack_base + argument));
             break;
 
         case OP_STL:
@@ -539,7 +550,7 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
         case OP_LDG:
             if (argument < 0 || argument >= state->nvar)
                 goto invalid;
-            AR_push(stack, &state->vars[argument]);
+            push_stack(stack, state->vars[argument]);
             break;
 
         case OP_STG:
@@ -559,7 +570,7 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
                       + argument;
                 if (index < 0 || index >= state->nvar)
                     goto invalid;
-                AR_push(stack, state->vars + index);
+                push_stack(stack, state->vars[index]);
             } break;
 
         case OP_STI:
@@ -696,6 +707,11 @@ void invoke(State *state, Array *stack, int nargs, int nret)
         fatal("Too many arguments for function call (%d; stack height is %d).",
             nargs, AR_size(stack));
 
+    /* This currently can't happen since nargs >= 1 and nret <= 1:
+    if (AR_size(stack) - nargs + nret > MAX_STACK_SIZE)
+        fatal("Stack limit exceeded when invoking a function.");
+    */
+
     /* Figure out which function to call */
     func_id = (int)*(Value*)AR_at(stack, AR_size(stack) - nargs);
     nargs -= 1;
@@ -806,7 +822,7 @@ Value builtin_pause(State *state, Array *stack, int narg, Value *args)
     char line[1024];
     fputs("Press Enter to continue...\n", stdout);
     fflush(stdout);
-    fgets(line, sizeof(line), stdin);
+    if (!fgets(line, sizeof(line), stdin)) { }
     return val_nil;
 }
 

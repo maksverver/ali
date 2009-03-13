@@ -135,7 +135,7 @@ static void dump_string_table(const char *data, size_t size)
     }
 }
 
-static void dump_function_table(const char *data, size_t size)
+static void dump_function_table(const char *data, size_t size, int instrs)
 {
     int n, entries;
 
@@ -173,21 +173,26 @@ static void dump_function_table(const char *data, size_t size)
     }
     data += 8*entries, size -= 8*entries;
 
-    printf("\nInstructions:\n");
-    for (n = 0; n < size/4; ++n)
+    if (instrs)
     {
-        int opcode, argument;
-        opcode   = data[4*n]&255;
-        argument = (data[4*n + 1] << 16)| ((data[4*n + 2]&255) << 8) | (data[4*n + 3]&255);
+        printf("\nInstructions:\n");
+        for (n = 0; n < size/4; ++n)
+        {
+            int opcode, argument;
+            opcode   = data[4*n];
+            argument = (data[4*n + 1] << 16) |
+                       (data[4*n + 2] <<  8) |
+                       (data[4*n + 3] <<  0);
 
-        printf("\t%6d:\t", n);
-        if (opcode == 0 && argument == 0)
-            printf("---\n");
-        else
-        if (opcode < 0 || opcode >= NOPCODE)
-            printf("invalid opcode: %d (argument: %d)\n", opcode, argument);
-        else
-            printf("%s %8d\n", opcodes[opcode], argument);
+            printf("\t%6d:\t", n);
+            if (opcode == 0 && argument == 0)
+                printf("---\n");
+            else
+            if (opcode < 0 || opcode >= NOPCODE)
+                printf("invalid opcode: %d (argument: %d)\n", opcode, argument);
+            else
+                printf("%s %8d\n", opcodes[opcode], argument);
+        }
     }
 }
 
@@ -275,7 +280,7 @@ static void dump_command_table(const char *data, size_t size)
     }
 }
 
-static void dump(const char *data, size_t size)
+static void dump(const char *opts, const char *data, size_t size)
 {
     size_t section_size;
 
@@ -291,7 +296,8 @@ static void dump(const char *data, size_t size)
         printf("Invalid header size.\n");
         return;
     }
-    dump_header(data, section_size);
+    if (strchr(opts, 'h') != NULL)
+        dump_header(data, section_size);
     data += section_size, size -= section_size;
 
     if (size < 4 || (section_size = (size_t)get_int32(data)) > size || size%4 != 0)
@@ -299,7 +305,8 @@ static void dump(const char *data, size_t size)
         printf("Invalid fragment table size.\n");
         return;
     }
-    dump_fragment_table(data, section_size);
+    if (strchr(opts, 'f') != NULL)
+        dump_fragment_table(data, section_size);
     data += section_size, size -= section_size;
 
     if (size < 4 || (section_size = (size_t)get_int32(data)) > size || size%4 != 0)
@@ -307,7 +314,8 @@ static void dump(const char *data, size_t size)
         printf("Invalid string table size.\n");
         return;
     }
-    dump_string_table(data, section_size);
+    if (strchr(opts, 's') != NULL)
+        dump_string_table(data, section_size);
     data += section_size, size -= section_size;
 
     if (size < 4 || (section_size = (size_t)get_int32(data)) > size || size%4 != 0)
@@ -315,7 +323,8 @@ static void dump(const char *data, size_t size)
         printf("Invalid function table size.\n");
         return;
     }
-    dump_function_table(data, section_size);
+    if (strchr(opts, 'u') != NULL || strchr(opts, 'i') != NULL)
+        dump_function_table(data, section_size, strchr(opts, 'i') != NULL);
     data += section_size, size -= section_size;
 
     if (size < 4 || (section_size = (size_t)get_int32(data)) > size || size%4 != 0)
@@ -323,27 +332,33 @@ static void dump(const char *data, size_t size)
         printf("Invalid command table size.\n");
         return;
     }
-    dump_command_table(data, section_size);
+    if (strchr(opts, 'c') != NULL)
+        dump_command_table(data, section_size);
     data += section_size, size -= section_size;
 }
 
 int main(int argc, char *argv[])
 {
-    const char *path;
+    const char *opts = "hfsuc", *path = "module.alo";
     FILE *fp;
     char *data;
     size_t size;
 
-    if (argc > 2)
+    if (argc > 3 || (argc > 2 && argv[1][0] != '-'))
     {
-        printf("Usage: alidump [<module>]\n");
+        printf("Usage: alidump -[hfsuic] [<module>]\n");
         return 0;
     }
-
     if (argc == 2)
+    {
         path = argv[1];
+    }
     else
-        path = "module.alo";
+    if (argc == 3)
+    {
+        if (argv[1][1] != '\0') opts = argv[1] + 1;
+        path = argv[2];
+    }
 
     /* Open file for reading */
     fp = fopen(path, "rb");
@@ -378,7 +393,8 @@ int main(int argc, char *argv[])
     }
     fclose(fp);
 
-    dump(data, size);
+    dump(opts, data, size);
+    printf("\n");
 
     return 0;
 }

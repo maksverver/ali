@@ -141,13 +141,17 @@ int resolve_local(const char *id)
 int resolve_function(const char *id)
 {
     const void *f_idx;
-    if (!ST_find(&st_functions, id, &f_idx))
+    if (ST_find(&st_functions, id, &f_idx))
     {
-        error("Reference to undeclared function \"%s\" on line %d.",
-            id, lineno + 1);
-        exit(1);
+        return (long)f_idx;
     }
-    return (long)f_idx;
+    if (strcmp(id, func_name) == 0)
+    {
+        return AR_size(&ar_functions);
+    }
+
+    fatal("Reference to undeclared function \"%s\" on line %d.",
+        id, lineno + 1);
 }
 
 int resolve_string()
@@ -249,9 +253,8 @@ void end_function(int func_nret)
     if (func_name != NULL &&
         ST_insert(&st_functions, func_name, (void*)AR_size(&ar_functions)))
     {
-        error("Redefinition of function \"%s\" on line %d.",
+        fatal("Redefinition of function \"%s\" on line %d.",
             func_name, lineno + 1);
-        exit(1);
     }
     AR_append(&ar_functions, &f);
 
@@ -396,9 +399,8 @@ void begin_command(const char *str)
     assert(fragment != NULL);
     if (!parse_command(fragment, &command))
     {
-        error("Could not parse command \"%s\" on line %d.",
+        fatal("Could not parse command \"%s\" on line %d.",
             fragment, lineno + 1);
-        exit(1);
     }
     free(fragment);
 
@@ -467,9 +469,8 @@ void add_fragment(const char *token)
     fragment.str = str;  /* will be re-allocated after ST_insert_entry() */
     if (ST_insert_entry(&st_fragments, (const void**)&fragment.str, &idx))
     {
-        error("Redeclaration of fragment \"%s\" on line %d.",
+        fatal("Redeclaration of fragment \"%s\" on line %d.",
             str, lineno + 1);
-        exit(1);
     }
     free(str);
     AR_append(&ar_fragments, &fragment);
@@ -483,17 +484,15 @@ int resolve_fragment(const char *token, int type)
     normalize(str);
     if (!ST_find(&st_fragments, str, &f_idx))
     {
-        error("Reference to undeclared fragment \"%s\" on line %d.",
+        fatal("Reference to undeclared fragment \"%s\" on line %d.",
             str, lineno + 1);
-        exit(1);
     }
     free(str);
     f = AR_at(&ar_fragments, (long)f_idx);
     if (type != -1 && type != f->type)
     {
-        error("Fragment referenced by \"%s\" has wrong type on line %d.",
+        fatal("Fragment referenced by \"%s\" has wrong type on line %d.",
             str, lineno + 1);
-        exit(1);
     }
     return f->id;
 }
@@ -771,18 +770,9 @@ void create_object_file()
 {
     FILE *fp = fopen(output_path, "wb");
     if (!fp)
-    {
-        error("Unable to open output file \"%s\".", output_path);
-        exit(1);
-    }
-
+        fatal("Unable to open output file \"%s\".", output_path);
     if (!write_alio(fp))
-    {
-        fclose(fp);
-        error("Unable to write output file \"%s\".", output_path);
-        exit(1);
-    }
-
+        fatal("Unable to write output file \"%s\".", output_path);
     fclose(fp);
 }
 
