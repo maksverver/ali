@@ -120,7 +120,8 @@ static void rebuild(struct Node **node)
     *node = w.left;
 }
 
-/* Either finds a scapegoat node and returns (size_t)-1, or returns the size of the subtree. */
+/* Either finds a scapegoat node, rebuilds its subtree, and returns (size_t)-1,
+   or (if no scapegoat node was found) returns the size of the subtree. */
 static size_t rebuild_scapegoat(struct Node **node, EA_cmp key_cmp, const void *key)
 {
     int n, m, o;
@@ -177,16 +178,18 @@ size_t ST_size(ScapegoatTree *tree)
     return tree->size;
 }
 
-static void create_node(ScapegoatTree *tree,
+static struct Node *create_node(ScapegoatTree *tree,
     struct Node **node, int depth, const void *key, const void *value )
 {
+    struct Node *new_node;
+
     /* Allocate new node */
-    *node = dmalloc(sizeof(struct Node));
-    assert(*node != NULL);
-    (*node)->left  = NULL;
-    (*node)->right = NULL;
-    (*node)->key   = tree->key_dup(key);
-    (*node)->value = tree->value_dup(value);
+    *node = new_node = dmalloc(sizeof(struct Node));
+    assert(new_node != NULL);
+    new_node->left  = NULL;
+    new_node->right = NULL;
+    new_node->key   = tree->key_dup(key);
+    new_node->value = tree->value_dup(value);
 
     /* Increment size of tree */
     tree->size += 1;
@@ -196,6 +199,8 @@ static void create_node(ScapegoatTree *tree,
     /* Rebalance */
     if (depth > log(tree->size)/log(1.0/alpha))
         rebuild_scapegoat(&tree->root, tree->key_cmp, key);
+
+    return new_node;
 }
 
 bool ST_find(const ScapegoatTree *tree, const void *key, const void **value)
@@ -221,26 +226,25 @@ bool ST_insert(ScapegoatTree *tree, const void *key, const void *value)
 
 bool ST_insert_entry(ScapegoatTree *tree, const void **key, const void **value)
 {
-    bool result;
     int depth = 0;
     struct Node **node = find(tree->key_cmp, &tree->root, *key, &depth);
 
     if (*node == NULL)
     {
-        create_node(tree, node, depth, *key, *value);
-        result = false;
+        struct Node *new_node = create_node(tree, node, depth, *key, *value);
+        *key   = new_node->key;
+        *value = new_node->value;
+        return false;
     }
     else
     {
         /* Overwrite existing value */
         tree->value_free((*node)->value);
         (*node)->value = tree->value_dup(*value);
-        result = true;
+        *key   = (*node)->key;
+        *value = (*node)->value;
+        return true;
     }
-
-    *key   = (*node)->key;
-    *value = (*node)->value;
-    return result;
 }
 
 bool ST_find_or_insert(ScapegoatTree *tree, const void *key, const void **value)
@@ -252,15 +256,20 @@ bool ST_find_or_insert_entry(ScapegoatTree *tree, const void **key, const void *
 {
     int depth = 0;
     struct Node **node = find(tree->key_cmp, &tree->root, *key, &depth);
-    bool found = (*node != NULL);
 
-    if (!found)
-        create_node(tree, node, depth, *key, *value);
-
-    *key   = (*node)->key;
-    *value = (*node)->value;
-
-    return found;
+    if (*node != NULL)
+    {
+        *key   = (*node)->key;
+        *value = (*node)->value;
+        return true;
+    }
+    else
+    {
+        struct Node *new_node = create_node(tree, node, depth, *key, *value);
+        *key   = new_node->key;
+        *value = new_node->value;
+        return false;
+    }
 }
 
 /* Erases an item in the tree. Returns true if the item was present, or
