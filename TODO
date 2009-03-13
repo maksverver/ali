@@ -1,11 +1,14 @@
 - check memory use with valgrind (interpreter only?)
 
 alic: (all of these can wait till later:)
+ - Allow multiple commands to map to the same body, e.g.
+    command UNLOCK DOOR, UNLOCK DOOR WITH KEY { quit }
  - Check for procedure calls in expressions (these are forbidden!)
  - Check for multiply declared commands
  - Implement dumping of debug data
 
 ali:
+ - Implement loading (and freeing!) of command table
  - Implement command parsing
  - Implement interpreter loop
  - Implement transcript logging

@@ -31,6 +31,10 @@ typedef struct Module
     Function *functions;
     void **function_data;
 
+    /* Command table */
+    int ncommand;
+    Command *commands;
+
 } Module;
 
 typedef struct State
@@ -169,7 +173,7 @@ static bool read_fragment_table(FILE *fp, Module *mod)
 
     if (entries == 0)
     {
-        mod->nfragment     = entries;
+        mod->nfragment     = 0;
         mod->fragments     = NULL;
         mod->fragment_data = NULL;
         return true;
@@ -196,7 +200,7 @@ static bool read_fragment_table(FILE *fp, Module *mod)
         offset -= 8 + 8*entries;
 
         mod->fragments[n].type = type;
-        mod->fragments[n].id   = type;
+        mod->fragments[n].id   = id;
         mod->fragments[n].str  = (char*)mod->fragment_data + offset;
     }
 
@@ -224,7 +228,7 @@ static bool read_string_table(FILE *fp, Module *mod)
 
     if (entries == 0)
     {
-        mod->nstring     = entries;
+        mod->nstring     = 0;
         mod->strings     = NULL;
         mod->string_data = NULL;
         return true;
@@ -267,7 +271,7 @@ static bool read_function_table(FILE *fp, Module *mod)
 
     if (entries == 0)
     {
-        mod->nfunction     = entries;
+        mod->nfunction     = 0;
         mod->functions     = NULL;
         mod->function_data = NULL;
         return true;
@@ -328,8 +332,58 @@ static bool read_function_table(FILE *fp, Module *mod)
 
 static bool read_command_table(FILE *fp, Module *mod)
 {
-    /* TODO */
-    return true;
+    int size, entries, n;
+
+    size = read_int32(fp);
+    if (size < 8 || size%4 != 0)
+        return false;
+    entries = read_int32(fp);
+    if ((size - 8)/4 < entries)
+        return false;
+
+    if (entries == 0)
+    {
+        mod->ncommand     = 0;
+        mod->commands     = NULL;
+        return true;
+    }
+
+    assert(mod->commands == NULL);
+    mod->commands = malloc(entries*sizeof(Command));
+    if (mod->commands == NULL)
+        return false;
+    mod->ncommand = entries;
+
+    int offset = 8;
+    for (n = 0; n < entries; ++n)
+    {
+        if (offset + 4 > size)
+            return false;
+        offset += 4;
+
+        int form = read_int16(fp);
+        int narg = read_int16(fp);
+
+        if (offset + 4*narg + 8 > size)
+            return false;
+        offset += 4*narg + 8;
+
+        if ( (form == 0 && narg != 1) ||
+             (form == 1 && narg != 2) ||
+             (form == 2 && narg != 4) )
+        {
+            return false;
+        }
+
+        mod->commands[n].form = form;
+        mod->commands[n].part[0] = (narg > 0) ? read_int32(fp) : -1;
+        mod->commands[n].part[1] = (narg > 1) ? read_int32(fp) : -1;
+        mod->commands[n].part[2] = (narg > 2) ? read_int32(fp) : -1;
+        mod->commands[n].part[3] = (narg > 3) ? read_int32(fp) : -1;
+        mod->commands[n].guard    = read_int32(fp);
+        mod->commands[n].function = read_int32(fp);
+    }
+    return offset == size;
 }
 
 void free_module(Module *mod)
@@ -346,6 +400,8 @@ void free_module(Module *mod)
     mod->functions = NULL;
     free(mod->function_data);
     mod->function_data = NULL;
+    free(mod->commands);
+    mod->commands = NULL;
     free(mod);
 }
 
@@ -738,7 +794,7 @@ Value builtin_write(State *state, Array *stack, int narg, Value *args)
 Value builtin_pause(State *state, Array *stack, int narg, Value *args)
 {
     char line[1024];
-    fprintf(stdout, "Press Enter to continue...\n");
+    fputs("Press Enter to continue...\n", stdout);
     fflush(stdout);
     fgets(line, sizeof(line), stdin);
     return val_nil;
@@ -750,9 +806,177 @@ Value builtin_restart(State *state, Array *stack, int narg, Value *args)
     return val_nil;
 }
 
-void command_loop()
+static int find_fragment(const Module *mod, const char *text, FragmentType type)
 {
-    char line[100];
+    int n;
+    /* TODO: use binary search instead */
+    for (n = 0; n < mod->nfragment; ++n)
+    {
+        if (mod->fragments[n].type == type &&
+            strcmp(mod->fragments[n].str, text) == 0)
+        {
+            return mod->fragments[n].id;
+        }
+    }
+    return -1;  /* not found */
+}
+
+static bool parse_command(const Module *mod, char *line, Command *cmd)
+{
+    int verb, ent1, prep, ent2;
+    char *eol, *p, *q, *r;
+
+    /* Find end of line */
+    for (eol = line; *eol; ++eol) { }
+
+    if ((verb = find_fragment(mod, line, F_VERB)) >= 0)
+    {
+        cmd->form = 0;
+        cmd->part[0] = verb;
+        cmd->part[1] = -1;
+        cmd->part[2] = -1;
+        cmd->part[3] = -1;
+        return true;
+    }
+
+    /* Split string at `p' */
+    for (p = eol; p >= line; --p)
+    {
+        if (*p != ' ') continue;
+        *p = '\0';
+        if ((verb = find_fragment(mod, line, F_VERB)) >= 0)
+        {
+            if ((ent1 = find_fragment(mod, p + 1, F_ENTITY)) >= 0)
+            {
+                cmd->form = 1;
+                cmd->part[0] = verb;
+                cmd->part[1] = ent1;
+                cmd->part[2] = -1;
+                cmd->part[3] = -1;
+                return true;
+            }
+
+            for (q = eol; q >= p; --q)
+            {
+                if (*q != ' ') continue;
+                *q = '\0';
+                if ((ent1 = find_fragment(mod, p + 1, F_ENTITY)) >= 0)
+                {
+                    for (r = eol; r >= q; --r)
+                    {
+                        if (*r != ' ') continue;
+                        *r = '\0';
+                        if (((prep = find_fragment(mod, q + 1, F_PREPOSITION)) >= 0) &&
+                            ((ent2 = find_fragment(mod, r + 1, F_ENTITY)) >= 0))
+                        {
+                            cmd->form = 2;
+                            cmd->part[0] = verb;
+                            cmd->part[1] = ent1;
+                            cmd->part[2] = prep;
+                            cmd->part[3] = ent2;
+                            return true;
+                        }
+                        *r = ' ';
+                    }
+                }
+                *q= ' ';
+            }
+        }
+        *p = ' ';
+    }
+    return false;
+}
+
+static bool evaluate_function(State *state, Array *stack, int func)
+{
+    if (func < 0 || func >= state->mod->nfunction)
+        return false;
+
+    Value val = func;
+    AR_push(stack, &val);
+    invoke(state, stack, 1, 1);
+    return *(Value*)AR_last(stack) > 0;
+}
+
+static bool match_command(const Command *c, const Command *d)
+{
+    if (c->form != d->form)
+        return false;
+
+    switch (c->form)
+    {
+    case 0:
+        return c->part[0] == d->part[0];
+
+    case 1:
+        return c->part[0] == d->part[0] && c->part[1] == d->part[1];
+
+    case 2:
+        return c->part[0] == d->part[0] && c->part[1] == d->part[1] &&
+               c->part[2] == d->part[2] && c->part[3] == d->part[3];
+    }
+    return false;
+}
+
+static void process_command(State *state, Array *stack, char *line)
+{
+    Command cmd;
+    if (!parse_command(state->mod, line, &cmd))
+    {
+        printf("I didn't understand that.\n");
+        return;
+    }
+
+    int num_matched = 0, num_active = 0, n, cmd_func;
+
+    /* TODO: use binary search to find matching commands instead;
+             requires updating the compiler so that it sorts commands properly */
+    for (n = 0; n < state->mod->ncommand; ++n)
+    {
+        const Command *command = &state->mod->commands[n];
+        if (match_command(&cmd, command))
+        {
+            ++num_matched;
+            if (command->guard < 0 ||
+                evaluate_function(state, stack, command->guard))
+            {
+                if (++num_active == 1)
+                {
+                    cmd_func = command->function;
+                }
+            }
+        }
+    }
+
+    if (num_matched == 0)
+    {
+        printf("You can't do that in this game.\n");
+        return;
+    }
+
+    if (num_active == 0)
+    {
+        printf("That's not possible right now.\n");
+        return;
+    }
+
+    if (num_active  > 1)
+    {
+        printf("That command is ambiguous.\n");
+        return;
+    }
+
+    /* Invoke the command function */
+    Value val = cmd_func;
+    AR_push(stack, &val);
+    invoke(state, stack, 1, 0);
+
+    /* TODO: save action to transcript? */
+}
+
+void command_loop(State *state, Array *stack)
+{
+    char line[1024];
     for (;;)
     {
         fputs("> ", stdout);
@@ -774,9 +998,7 @@ void command_loop()
             *eol = '\0';
         }
         normalize(line);
-
-        /* TODO: parse command (see alic for how it's done) */
-        printf("[%s]\n", line);
+        process_command(state, stack, line);
     }
 }
 
@@ -814,7 +1036,7 @@ int main(int argc, char *argv[])
 
     restart(state, &stack);
 
-    command_loop();
+    command_loop(state, &stack);
 
     warn("Unexpected end of input!");
 

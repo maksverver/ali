@@ -56,9 +56,9 @@ static Array ar_commands = AR_INIT(sizeof(Command));
 
 
 /* Used when parsing a function definition: */
-static char *func_name;
+static char *func_name = NULL;
 static Array func_params = AR_INIT(sizeof(char*));
-static int func_nlocal;
+static int func_nlocal = 0;
 static Array func_body = AR_INIT(sizeof(Instruction));
 static Array inv_stack = AR_INIT(sizeof(int));
 
@@ -209,6 +209,7 @@ void parse_string(const char *token)
 void begin_function(const char *id)
 {
     assert(func_name == NULL);
+    assert(id != NULL);
 
     func_name   = strdup(id);
     func_nlocal = 0;
@@ -264,6 +265,7 @@ void end_function(int func_nret)
     for (n = 0; n < AR_size(&func_params); ++n)
         free(*(char**)AR_at(&func_params, n));
     AR_clear(&func_params);
+    func_nlocal = 0;
 }
 
 /* Parses a <preposition> <entity> sequence. */
@@ -392,7 +394,8 @@ void begin_command(const char *str)
     assert(fragment != NULL);
     if (!parse_command(fragment))
     {
-        fprintf(stderr, "Could not parse command: %s\n", fragment);
+        error("Could not parse command \"%s\" on line %d.",
+            fragment, lineno + 1);
         exit(1);
     }
     free(fragment);
@@ -404,8 +407,7 @@ void end_guard()
 {
     /* Terminate function */
     func_name   = NULL;
-    func_nlocal = 0;
-    end_function(0);
+    end_function(1);
 
     /* Add guard to command */
     command.guard = AR_size(&ar_functions) - 1;
@@ -414,8 +416,6 @@ void end_guard()
 void end_command()
 {
     /* Terminate function */
-    func_name   = NULL;
-    func_nlocal = 0;
     end_function(0);
 
     /* Add function to command */
