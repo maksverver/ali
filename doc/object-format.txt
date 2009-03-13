@@ -65,3 +65,5 @@ Command table
   4*A xx xx xx xx   Reference to verb/preposition/entity
   4   xx xx xx xx   Guard (index into function table, or -1)
   4   xx xx xx xx   Body (index into function table)
+  Commands must be ordered by form first, and lexicographically by arguments
+  second.

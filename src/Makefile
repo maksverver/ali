@@ -1,9 +1,9 @@
 # Debug flags:
-CFLAGS=-Wall -g -O0 -fmudflap
+CFLAGS=-Wall -g -Os -fmudflap
 LDFLAGS=-lm -fmudflap -lmudflap
 
 # Release flags:
-#CFLAGS=-O2
+#CFLAGS=-Os
 #LDFLAGS=-lm
 
 EXECUTABLES=ali alic alidump

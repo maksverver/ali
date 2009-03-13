@@ -61,18 +61,19 @@ Builtin builtins[NBUILTIN] = {
    The initial height of the stack must be at least args.
 
    Stack lay-out on entry is as follows:
-   +---+~ ~+------+----+~ ~+--+
-   | 0 |   | func | a1 |   |aN|   args == n + 1
-   +---+~ ~+------+----+~ ~+--+
-           |<--- args -------->
+   +---+~ ~+------+----+~ ~+----+
+   | 0 |   | func | a1 |   | aN |
+   +---+~ ~+------+----+~ ~+----+
+           |<------ nargs ----->|
 
    And on exit:
-   +---+~ ~+--------+
-   | 0 |   | result |
-   +---+~ ~+--------+
+   +---+~ ~+----+----+~ ~+----+
+   | 0 |   | r1 | r2 |   | rN |
+   +---+~ ~+----+----+~ ~+----+
+           |<----- nret ----->|
 
-   i.e. the arguments including the function are replaced by the
-   result of the function.
+   i.e. the arguments including the function number are replaced by the
+   results of the function.
 */
 void invoke(State *state, Array *stack, int nargs, int nret);
 
@@ -524,7 +525,8 @@ Value exec_function(State *state, Array *stack, const Function *f, int stack_bas
         case OP_LDL:
             if (argument < 0 || stack_base + argument >= AR_size(stack))
                 goto invalid;
-            AR_push(stack, AR_at(stack, stack_base + argument));
+            val = *(Value*)AR_at(stack, stack_base + argument);
+            AR_push(stack, &val);
             break;
 
         case OP_STL:
@@ -684,6 +686,12 @@ void invoke(State *state, Array *stack, int nargs, int nret)
     if (nargs <= 0)
         fatal("Too few arguments for function call (%d)", nargs);
 
+    if (nret < 0)
+        fatal("Too few return values for function call (%d)", nret);
+
+    if (nret > 1)
+        fatal("Too many return values for function call (%d)", nret);
+
     if (nargs > AR_size(stack))
         fatal("Too many arguments for function call (%d; stack height is %d).",
             nargs, AR_size(stack));
@@ -736,8 +744,10 @@ void invoke(State *state, Array *stack, int nargs, int nret)
         }
     }
 
-    AR_resize(stack, stack_base);
-    *(Value*)AR_last(stack) = result;
+    /* Remove arguments and function call */
+    AR_resize(stack, stack_base - 1);
+    if (nret == 1)
+        AR_push(stack, &result);
 }
 
 void quit(State *state, Array *stack, int status)
@@ -806,17 +816,26 @@ Value builtin_restart(State *state, Array *stack, int narg, Value *args)
     return val_nil;
 }
 
+/* Returns the index of a fragment of a matching fragment. */
 static int find_fragment(const Module *mod, const char *text, FragmentType type)
 {
-    int n;
-    /* TODO: use binary search instead */
-    for (n = 0; n < mod->nfragment; ++n)
+    /* Binary search for a matching fragment in range [lo,hi) */
+    int lo = 0, hi = mod->nfragment;
+    while (lo < hi)
     {
-        if (mod->fragments[n].type == type &&
-            strcmp(mod->fragments[n].str, text) == 0)
-        {
-            return mod->fragments[n].id;
-        }
+        int mid = lo + (hi - lo)/2;
+
+        int d = strcmp(mod->fragments[mid].str, text);
+        if (d == 0)
+            d = mod->fragments[mid].type - type;
+
+        if (d < 0)
+            lo = mid + 1;
+        else
+        if (d > 0)
+            hi = mid;
+        else
+            return mod->fragments[mid].id;  /* found */
     }
     return -1;  /* not found */
 }
@@ -895,27 +914,38 @@ static bool evaluate_function(State *state, Array *stack, int func)
     Value val = func;
     AR_push(stack, &val);
     invoke(state, stack, 1, 1);
-    return *(Value*)AR_last(stack) > 0;
+    AR_pop(stack, &val);
+    return val > 0;
 }
 
-static bool match_command(const Command *c, const Command *d)
+static int cmp_commands(const Command *c, const Command *d)
 {
-    if (c->form != d->form)
-        return false;
+    if (c->form    - d->form    != 0) return c->form    - d->form;
+    if (c->part[0] - d->part[0] != 0) return c->part[0] - d->part[0];
+    if (c->part[1] - d->part[1] != 0) return c->part[1] - d->part[1];
+    if (c->part[2] - d->part[2] != 0) return c->part[2] - d->part[2];
+    if (c->part[3] - d->part[3] != 0) return c->part[3] - d->part[3];
+    return 0;
+}
 
-    switch (c->form)
+/* Returns the index of the first command that is not less than `cmd' according
+   to cmp_command() defined above, or mod->ncommand if none is found. This
+   means that the caller should check that the result is less than mod->ncommand
+   and that cmp_commands(mod->commands[result], cmd) == 0, to ensure that a
+   matching element was foud. */
+static int find_first_matching_command(const Module *mod, const Command *cmd)
+{
+    /* Binary search for command in range [lo,hi) */
+    int lo = 0, hi = mod->ncommand;
+    while (lo < hi)
     {
-    case 0:
-        return c->part[0] == d->part[0];
-
-    case 1:
-        return c->part[0] == d->part[0] && c->part[1] == d->part[1];
-
-    case 2:
-        return c->part[0] == d->part[0] && c->part[1] == d->part[1] &&
-               c->part[2] == d->part[2] && c->part[3] == d->part[3];
+        int mid = lo + (hi - lo)/2;
+        if (cmp_commands(&mod->commands[mid], cmd) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
     }
-    return false;
+    return lo;
 }
 
 static void process_command(State *state, Array *stack, char *line)
@@ -928,22 +958,20 @@ static void process_command(State *state, Array *stack, char *line)
     }
 
     int num_matched = 0, num_active = 0, n, cmd_func;
-
-    /* TODO: use binary search to find matching commands instead;
-             requires updating the compiler so that it sorts commands properly */
-    for (n = 0; n < state->mod->ncommand; ++n)
+    for ( n = find_first_matching_command(state->mod, &cmd);
+          n < state->mod->ncommand; ++n )
     {
         const Command *command = &state->mod->commands[n];
-        if (match_command(&cmd, command))
+        if (cmp_commands(command, &cmd) != 0)
+            break;
+
+        ++num_matched;
+        if (command->guard < 0 ||
+            evaluate_function(state, stack, command->guard))
         {
-            ++num_matched;
-            if (command->guard < 0 ||
-                evaluate_function(state, stack, command->guard))
+            if (++num_active == 1)
             {
-                if (++num_active == 1)
-                {
-                    cmd_func = command->function;
-                }
+                cmd_func = command->function;
             }
         }
     }

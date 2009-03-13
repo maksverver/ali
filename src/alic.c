@@ -62,10 +62,6 @@ static int func_nlocal = 0;
 static Array func_body = AR_INIT(sizeof(Instruction));
 static Array inv_stack = AR_INIT(sizeof(int));
 
-/* Used when parsing a command declaration */
-static Command command;
-/* func_body above is also reused */
-
 /* Used when parsing strings */
 static char *str_buf = NULL;
 static size_t str_len = 0;
@@ -269,7 +265,7 @@ void end_function(int func_nret)
 }
 
 /* Parses a <preposition> <entity> sequence. */
-static bool parse_command3(char *str)
+static bool parse_command3(char *str, Command *command)
 {
     const void *f_idx, *g_idx;
     const Fragment *f, *g;
@@ -294,9 +290,9 @@ static bool parse_command3(char *str)
         if (ok)
         {
             /* FORM 2: <verb> <entity> <preposition> <entity> */
-            command.form = 2;
-            command.part[2] = f->id;
-            command.part[3] = g->id;
+            command->form = 2;
+            command->part[2] = f->id;
+            command->part[3] = g->id;
             return true;
         }
         *sep = ' ';
@@ -307,7 +303,7 @@ static bool parse_command3(char *str)
 
 /* Parses the part after "verb" in a command.
    This either an entity reference, or an entity/preposition/reference. */
-static bool parse_command2(char *str)
+static bool parse_command2(char *str, Command *command)
 {
     const void *f_idx;
     Fragment *f;
@@ -318,8 +314,10 @@ static bool parse_command2(char *str)
         (f = AR_at(&ar_fragments, (long)f_idx))->type == F_ENTITY)
     {
         /* FORM 1: <verb> <entity> */
-        command.form = 1;
-        command.part[1] = f->id;
+        command->form = 1;
+        command->part[1] = f->id;
+        command->part[2] = -1;
+        command->part[3] = -1;
         return true;
     }
 
@@ -333,12 +331,12 @@ static bool parse_command2(char *str)
         *sep = '\0';
         ok = ST_find(&st_fragments, str, &f_idx) &&
              (f = AR_at(&ar_fragments, (long)f_idx))->type == F_ENTITY &&
-             parse_command3(sep + 1);
+             parse_command3(sep + 1, command);
         *sep = ' ';
 
         if (ok)
         {
-            command.part[1] = f->id;
+            command->part[1] = f->id;
             return true;
         }
     }
@@ -346,7 +344,7 @@ static bool parse_command2(char *str)
     return false;
 }
 
-static bool parse_command(char *str)
+static bool parse_command(char *str, Command *command)
 {
     const void *f_idx;
     const Fragment *f;
@@ -357,8 +355,11 @@ static bool parse_command(char *str)
         (f = AR_at(&ar_fragments, (long)f_idx))->type == F_VERB)
     {
         /* FORM 0: <verb> */
-        command.form = 0;
-        command.part[0] = f->id;
+        command->form = 0;
+        command->part[0] = f->id;
+        command->part[1] = -1;
+        command->part[2] = -1;
+        command->part[3] = -1;
         return true;
     }
 
@@ -372,12 +373,12 @@ static bool parse_command(char *str)
         *sep = '\0';
         ok = ST_find(&st_fragments, str, &f_idx) &&
              (f = AR_at(&ar_fragments, (long)f_idx))->type == F_VERB &&
-             parse_command2(sep + 1);
+             parse_command2(sep + 1, command);
         *sep = ' ';
 
         if (ok)
         {
-            command.part[0] = f->id;
+            command->part[0] = f->id;
             return true;
         }
     }
@@ -388,11 +389,12 @@ static bool parse_command(char *str)
 void begin_command(const char *str)
 {
     char *fragment;
+    Command command;
 
     fragment = strdup(str);
     normalize(fragment);
     assert(fragment != NULL);
-    if (!parse_command(fragment))
+    if (!parse_command(fragment, &command))
     {
         error("Could not parse command \"%s\" on line %d.",
             fragment, lineno + 1);
@@ -400,29 +402,43 @@ void begin_command(const char *str)
     }
     free(fragment);
 
-    command.guard = -1;
+    /* Add partial command to command array */
+    command.guard    = -1;
+    command.function = -1;
+    AR_append(&ar_commands, &command);
 }
 
 void end_guard()
 {
-    /* Terminate function */
+    /* Terminate guard function */
+    size_t guard = AR_size(&ar_functions);
     func_name   = NULL;
     end_function(1);
 
-    /* Add guard to command */
-    command.guard = AR_size(&ar_functions) - 1;
+    /* Add guard to open commands */
+    size_t n = AR_size(&ar_commands);
+    while (n-- > 0)
+    {
+        Command *cmd = AR_at(&ar_commands, n);
+        if (cmd->function >= 0) break;  /* complete function found */
+        cmd->guard = guard;
+    }
 }
 
 void end_command()
 {
-    /* Terminate function */
+    /* Terminate body function */
+    size_t function = AR_size(&ar_functions);
     end_function(0);
 
-    /* Add function to command */
-    command.function = AR_size(&ar_functions) - 1;
-
-    /* Add command to command array */
-    AR_append(&ar_commands, &command);
+    /* Add function to open commands */
+    size_t n = AR_size(&ar_commands);
+    while (n-- > 0)
+    {
+        Command *cmd = AR_at(&ar_commands, n);
+        if (cmd->function >= 0) break;  /* complete function found */
+        cmd->function = function;
+    }
 }
 
 void begin_verb()
@@ -443,30 +459,35 @@ void begin_entity()
     fragment.id   = num_entities++;
 }
 
-void add_fragment(const char *str)
+void add_fragment(const char *token)
 {
     const void *idx = (void*)AR_size(&ar_fragments);
-    fragment.str = str;  /* will be re-allocated after ST_insert_entry */
+    char *str = strdup(token);
+    normalize(str);
+    fragment.str = str;  /* will be re-allocated after ST_insert_entry() */
     if (ST_insert_entry(&st_fragments, (const void**)&fragment.str, &idx))
     {
         error("Redeclaration of fragment \"%s\" on line %d.",
             str, lineno + 1);
         exit(1);
     }
+    free(str);
     AR_append(&ar_fragments, &fragment);
 }
 
-int resolve_fragment(const char *str, int type)
+int resolve_fragment(const char *token, int type)
 {
     const void *f_idx;
     const Fragment *f;
-
+    char *str = strdup(token);
+    normalize(str);
     if (!ST_find(&st_fragments, str, &f_idx))
     {
         error("Reference to undeclared fragment \"%s\" on line %d.",
             str, lineno + 1);
         exit(1);
     }
+    free(str);
     f = AR_at(&ar_fragments, (long)f_idx);
     if (type != -1 && type != f->type)
     {
@@ -475,19 +496,6 @@ int resolve_fragment(const char *str, int type)
         exit(1);
     }
     return f->id;
-}
-
-int parse_fragment(const char *token, int type)
-{
-    char *str;
-    int result;
-
-    str = strdup(token);
-    normalize(str);
-    result = resolve_fragment(str, type);
-    free(str);
-
-    return result;
 }
 
 void begin_call(const char *name)
@@ -699,37 +707,49 @@ static bool write_alio_functions(FILE *fp)
     return true;
 }
 
+static int cmp_commands(const void *a, const void *b)
+{
+    const Command *c = a, *d =b;
+    if (c->form    - d->form    != 0) return c->form    - d->form;
+    if (c->part[0] - d->part[0] != 0) return c->part[0] - d->part[0];
+    if (c->part[1] - d->part[1] != 0) return c->part[1] - d->part[1];
+    if (c->part[2] - d->part[2] != 0) return c->part[2] - d->part[2];
+    if (c->part[3] - d->part[3] != 0) return c->part[3] - d->part[3];
+    return 0;
+}
+
 static bool write_alio_commands(FILE *fp)
 {
-    int ncommands, total_args, n, m;
+    int ncommand, total_args, n, m;
     int form_to_nargs[3] = { 1, 2, 4 };
-    Command *cmd;
+    Command *commands;
+
+    commands = AR_data(&ar_commands);
+    ncommand = AR_size(&ar_commands);
+
+    /* Sort commands */
+    qsort(commands, ncommand, sizeof(Command), &cmp_commands);
 
     /* Compute and write command table size */
-    ncommands = AR_size(&ar_commands);
     total_args = 0;
-    for (n = 0; n < ncommands; ++n)
-    {
-        cmd = (Command*)AR_at(&ar_commands, n);
-        total_args += form_to_nargs[cmd->form];
-    }
-    if (!write_int32(fp, 8 + 12*AR_size(&ar_commands) + 4*total_args))
+    for (n = 0; n < ncommand; ++n)
+        total_args += form_to_nargs[commands[n].form];
+    if (!write_int32(fp, 8 + 12*ncommand + 4*total_args))
         return false;
 
     /* Write all commands */
-    if (!write_int32(fp, AR_size(&ar_commands)))
+    if (!write_int32(fp, ncommand))
         return false;
-    for (n = 0; n < ncommands; ++n)
+    for (n = 0; n < ncommand; ++n)
     {
-        cmd = (Command*)AR_at(&ar_commands, n);
-        if (!write_int16(fp, cmd->form)) return false;
-        if (!write_int16(fp, form_to_nargs[cmd->form])) return false;
-        for (m = 0; m < form_to_nargs[cmd->form]; ++m)
+        if (!write_int16(fp, commands[n].form)) return false;
+        if (!write_int16(fp, form_to_nargs[commands[n].form])) return false;
+        for (m = 0; m < form_to_nargs[commands[n].form]; ++m)
         {
-            if (!write_int32(fp, cmd->part[m])) return false;
+            if (!write_int32(fp, commands[n].part[m])) return false;
         }
-        if (!write_int32(fp, cmd->guard)) return false;
-        if (!write_int32(fp, cmd->function)) return false;
+        if (!write_int32(fp, commands[n].guard)) return false;
+        if (!write_int32(fp, commands[n].function)) return false;
     }
 
     return true;

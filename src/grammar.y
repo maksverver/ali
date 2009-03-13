@@ -33,7 +33,6 @@ void begin_verb();
 void begin_preposition();
 void begin_entity();
 void add_fragment(const char *str);
-int parse_fragment(const char *token, int type);
 void begin_call();
 void end_call(int nret);
 void count_arg();
@@ -80,10 +79,15 @@ declprocedure   : PROCEDURE
                   LPAREN optparameters RPAREN
                   block { end_function(0); };
 
-declcommand     : COMMAND
-                  FRAGMENT { begin_command(yytext); }
+declcommand     : optcmdtok
+                  cmdfrags
                   guard
                   block { end_command(); };
+optcmdtok       : COMMAND
+                | ;
+cmdfrags        : cmdfrags COMMA cmdfrag
+                | cmdfrag;
+cmdfrag         : FRAGMENT { begin_command(yytext); };
 guard           : expression { end_guard(); }
                 | ;
 
