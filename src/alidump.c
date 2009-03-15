@@ -9,6 +9,11 @@ static const char *opcodes[NOPCODE] = {
     "STI", "JMP", "JNP", "OP1",
     "OP2", "OP3", "CAL", "RET" };
 
+/* This is used for pretty-printing the command table */
+static int nverb, nent, nprep;
+static char **verbs, **ents, **preps;
+
+
 static int get_int32(const char *data)
 {
     const unsigned char *bytes = (const unsigned char*)data;
@@ -42,10 +47,16 @@ static void dump_header(const char *data, size_t size)
     }
 
     version = get_int16(data + 4);
+    nverb = get_int32(data +  8);
+    nprep = get_int32(data + 12);
+    nent  = get_int32(data + 16);
+    verbs = malloc(sizeof(char*)*nverb);
+    preps = malloc(sizeof(char*)*nprep);
+    ents  = malloc(sizeof(char*)*nent);
     printf("File version:                %4d.%d\n", (version >> 8)&255, version&255);
-    printf("Number of verbs:             %6d\n", get_int32(data +  8));
-    printf("Number of prepositions:      %6d\n", get_int32(data + 12));
-    printf("Number of entities:          %6d\n", get_int32(data + 16));
+    printf("Number of verbs:             %6d\n", nverb);
+    printf("Number of prepositions:      %6d\n", nprep);
+    printf("Number of entities:          %6d\n", nent);
     printf("Number of entity properties: %6d\n", get_int32(data + 20));
     printf("Number of global variables:  %6d\n", get_int32(data + 24));
     printf("Entry point:                 %6d\n", get_int32(data + 28));
@@ -73,7 +84,8 @@ static void dump_fragment_table(const char *data, size_t size)
 
     for (n = 0; n < entries; ++n)
     {
-        int type   = *(data + 8 + 8*n);
+        int flags  = (*(data + 8 + 8*n) & 0xf0) >> 4;
+        int type   = (*(data + 8 + 8*n) & 0x0f);
         int id     = get_int24(data + 8 + 8*n + 1);
         int offset = get_int32(data + 8 + 8*n + 4);
 
@@ -90,8 +102,22 @@ static void dump_fragment_table(const char *data, size_t size)
             else
                 printf("\"%s\" (offset: %d; length: %d)", data + offset, offset, length);
         }
-        printf(" => %s %d\n", type == 0 ? "verb" : type == 1 ? "proposition" :
-                              type == 2 ? "entity" : "<invalid type>", id);
+        printf(" => %s %d", type == 0 ? "verb" : type == 1 ? "preposition" :
+                            type == 2 ? "entity" : "<invalid type>", id);
+        if (flags&1) printf(" (canonical)");
+        printf("\n");
+
+        if ((flags&1) && type == 0 && verbs != NULL
+            && id >= 0 && id < nverb && verbs[id] == NULL)
+            verbs[id] = strdup(data + offset);
+
+        if ((flags&1) && type == 1 && preps != NULL
+             && id >= 0 && id < nprep && preps[id] == NULL)
+            preps[id] = strdup(data + offset);
+
+        if ((flags&1) && type == 2 && ents != NULL
+             && id >= 0 && id < nent && ents[id] == NULL)
+            ents[id] = strdup(data + offset);
     }
 }
 
@@ -200,6 +226,24 @@ static void dump_function_table(const char *data, size_t size, int instrs)
     }
 }
 
+static const char *get_verb(int id)
+{
+    if (id < 0 || id >= nverb) return "<?>";
+    return verbs[id] == NULL ? "<NULL>" : verbs[id];
+}
+
+static const char *get_prep(int id)
+{
+    if (id < 0 || id >= nprep) return "<?>";
+    return preps[id] == NULL ? "<NULL>" : preps[id];
+}
+
+static const char *get_ent(int id)
+{
+    if (id < 0 || id >= nent) return "<?>";
+    return ents[id] == NULL ? "<NULL>" : ents[id];
+}
+
 static void dump_command_table(const char *data, size_t size)
 {
     int n, entries;
@@ -221,7 +265,7 @@ static void dump_command_table(const char *data, size_t size)
         return;
     }
 
-    printf("Command Form    Verb    Object  Prepos. Obj. 2  Guard   Function\n");
+    printf("Command  Form    Verb   Object  Prepos. Obj. 2  Guard   Function\n");
     printf("------- ------- ------- ------- ------- ------- ------- -------\n");
     for (n = 0; n < entries; ++n)
     {
@@ -301,9 +345,15 @@ static void dump_command_table(const char *data, size_t size)
             printf("  %6d", obj2);
         printf("  %6d\n", func);
 
+
+        printf("        ");
+        if (verb != -1) printf(" %s", get_verb(verb));
+        if (obj1 != -1) printf(" %s", get_ent(obj1));
+        if (prep != -1) printf(" %s", get_prep(prep));
+        if (obj2 != -1) printf(" %s", get_ent(obj2));
+        printf("\n");
     }
     printf("------- ------- ------- ------- ------- ------- ------- -------\n");
-
 }
 
 static void dump(const char *opts, const char *data, size_t size)

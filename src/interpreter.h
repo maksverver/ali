@@ -1,6 +1,8 @@
 #ifndef INTERPRETER_H_INCLUDED
 #define INTERPRETER_H_INCLUDED
 
+#include <stdbool.h>
+
 typedef struct Instruction
 {
     int opcode, argument;
@@ -26,6 +28,7 @@ typedef struct Fragment
     FragmentType type;
     int          id;
     const char   *str;
+    bool         canon;
 } Fragment;
 
 #endif /* ndef INTERPRETER_H_INCLUDED */

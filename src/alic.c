@@ -488,23 +488,26 @@ void end_command()
 
 void begin_verb()
 {
-    fragment.type = F_VERB;
-    fragment.id   = num_verbs++;
+    fragment.type  = F_VERB;
+    fragment.id    = num_verbs++;
+    fragment.canon = true;
 }
 
 void begin_preposition()
 {
-    fragment.type = F_PREPOSITION;
-    fragment.id   = num_prepositions++;
+    fragment.type  = F_PREPOSITION;
+    fragment.id    = num_prepositions++;
+    fragment.canon = true;
 }
 
 void begin_entity()
 {
-    fragment.type = F_ENTITY;
-    fragment.id   = num_entities++;
+    fragment.type  = F_ENTITY;
+    fragment.id    = num_entities++;
+    fragment.canon = true;
 }
 
-void add_fragment(const char *token)
+void add_synonym(const char *token)
 {
     const void *idx = (void*)AR_size(&ar_fragments);
     char *str = strdup(token);
@@ -517,6 +520,8 @@ void add_fragment(const char *token)
     }
     free(str);
     AR_append(&ar_fragments, &fragment);
+
+    fragment.canon = false;  /* next fragment will be non-canonical */
 }
 
 int resolve_fragment(const char *token, int type)
@@ -638,8 +643,11 @@ static bool write_alio_fragments(FILE *fp)
     offset = 8 + 8*nfragment;
     for (n = 0; n < nfragment; ++n)
     {
-        if (!(write_int8(fp, fragments[n].type) && write_int24(fp, fragments[n].id)
-              && write_int32(fp, offset)))
+        int flags_type = fragments[n].type;
+        if (fragments[n].canon) flags_type |= 0x10;
+        if (!(write_int8(fp, flags_type) &&
+              write_int24(fp, fragments[n].id) &&
+              write_int32(fp, offset)))
             return false;
         offset += strlen(fragments[n].str) + 1;
     }

@@ -32,7 +32,7 @@ int resolve_property(const char *str);
 void begin_verb(void);
 void begin_preposition(void);
 void begin_entity(void);
-void add_fragment(const char *str);
+void add_synonym(const char *str);
 void begin_call(const char *name, int nret);
 void end_call(int nret);
 void count_arg(void);
@@ -99,7 +99,7 @@ parameter       : LOCALVAR { add_parameter(yytext); };
 
 synonyms        : synonyms COMMA synonym
                 | synonym;
-synonym         : FRAGMENT { add_fragment(yytext); };
+synonym         : FRAGMENT { add_synonym(yytext); };
 
 block           : LCURBR statements RCURBR;
 statements      : statements statement

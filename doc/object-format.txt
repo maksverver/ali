@@ -18,7 +18,8 @@ Fragment table
   4   xx xx xx xx   Fragment table size (S)
   4   xx xx xx xx   Number of entries (E)
   For each fragment:
-  4   TT II II II   TT: type referenced (0: verb, 1: preposition, 2: entity)
+  4   FT II II II    F: flags: 1 for canonical form
+                     T: type referenced (0: verb, 1: preposition, 2: entity)
                     II: index of referenced type
   4   xx xx xx xx   Offset relative to start of fragment table
                     Offset must be in range [8 + 8*E, S)
