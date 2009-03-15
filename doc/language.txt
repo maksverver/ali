@@ -1,0 +1,94 @@
+A script consists of a sequence of declarations. Single-line comments can be
+included by prefixing them with the hash character (#).
+
+For example:
+ # Like this
+ $x = 1;    # Or like this (only part of the line is a comment)
+
+A script can contain sentence fragments, which are sequences of one or more
+words spelled in all uppercase letters and digits (but not starting with a
+digit). All keywords and identifiers start with lowercase letters to distinguish
+them from sentence fragments.
+
+Verbs, entities and prepositions are defined with the verb, entity or
+preposition keyword, followed by one or more fragments, which represent
+synonyms. The first synonym specified is the canonical form of this verb,
+entity or representation.
+
+Example:
+  verb QUIT, EXIT, END;     # declare a verb QUIT with synonyms EXIT and END
+  entity THE BOX;           # declare an entity
+  preposition WITH, USING;  # declare a preposition with two synonyms
+
+The language supports expressions, which may be one of:
+ - the nil value ("nil")
+ - the Boolean values ("true" and "false")
+ - integer literals (of limited range)
+ - string literals, enclosed in double quotes, which may span multiple lines,
+   and which may contain characters escapes indicating by a backslash.
+ - symbolic values, preceded by a colon (e.g. ":home")
+ - local variable references, denoted by identifiers prefixed with a dollar
+   sign (e.g. "$x")
+ - global variable referenced, denoted by identifiers prefixed with an at sign
+   (e.g. "@x")
+ - direct entity references, formed by a sentence fragment (e.g. "THE BOX")
+ - indirect entity references, formed by placing a local variable between
+   square braces (e.g. "[$entity]")
+ - attribute references for entities, denoted by identifiers prefixed with a
+   dot; these must be used in conjunction with an entity reference (e.g. 
+   "THE BOX.full".
+ - function calls, denoted by an identifier followed by its arguments, seperated
+   by commas, and surrounded by round braces (e.g. "func($x, 123)" )
+
+Expressions can be grouped using round braces and can be combined using the
+following operators, in order of decreasing priority:
+  not  (e.g. "not $x")    yields true when its operand is false
+  <>   (e.g. "$x <> $y")  yields true when its operands are different
+  =    (e.g. "$x = $y")   yields true when its operands are equal
+  and  (e.g. "$x and $y") yields true when both of its operands are true
+  or   (e.g. "$x or $y")  yields true when at least one of its operands is true
+  if-then-else  (e.g. if $x then $y else $z) 
+                          yields the second operand if the first one is true,
+                          and the third operand otherwise.
+
+A script may declare functions using the "function" keyword, followed by an
+identifier specifying the function's name, followed by its arguments specified
+as local variables separated by commas and surrounded by round braces. Finally,
+the expression used to evaluate the function follows.
+
+Example:
+    function if_equal($x, $y, $eq, $ne)
+        if $x = $y then $eq else $ne
+
+A functions can contain an arbitrary complex expression, call other functions,
+or even recursively call itself.
+
+A script may declare procedures similar to procedures, but instead of an
+expression a procedure evaluates a statement block and returns no value.
+A statement block is a list of zero or more statements enclosed in curly braces.
+Each statement is terminated by a semicolon or a right curly brace (but not
+both).
+
+A statement is one of the following:
+ - an if-then-else statement is similar to an if-then-else expression except
+   the then- and else-clauses contain statement blocks to be executed (instead
+   of expressions to be evaluated).
+ - a set statement assigns an expression to a variable
+ - a procedure call invokes a procedure with optional arguments, similar to a
+   function call
+ - a literal string can be provided as a short-hand call to the built-in write()
+   procedure which writes output to the screen.
+
+Example of a procedure declaration and statements:
+
+    procedure do_something($x)
+    {
+        "Output!\n";
+        if ($x = @x) then {
+            call_other_proc($x);
+        } else {
+            set [SOME ENTITY].attr $x;
+        }
+    }
+
+TODO: describe commands, guards.
