@@ -1,7 +1,6 @@
 - Check memory use with valgrind (interpreter only?)
 
 alic: (all of these can wait till later:)
- - Check for procedure calls in expressions (these are forbidden!)
  - Support for forward declarations of functions/procedures?
 
 ali:

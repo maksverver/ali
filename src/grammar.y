@@ -14,28 +14,28 @@ void yyerror(const char *str);
 
 /* Functions defined in alic.c */
 void begin_command(const char *str);
-void end_guard();
-void end_command();
-void begin_function(const char *id);
+void end_guard(void);
+void end_command(void);
+void begin_function(const char *id, int nret);
 void add_parameter(const char *id);
 void emit(int opcode, int arg);
-void end_function();
+void end_function(void);
 void patch_jmp(int offset);
 int resolve_global(const char *str);
 int resolve_local(const char *str);
-int resolve_function(const char *id);
 int resolve_symbol(const char *str);
 void parse_string(const char *token);
-int resolve_string();
+int resolve_string(void);
+void write_string(void);
 int resolve_fragment(const char *str, int type);
 int resolve_property(const char *str);
-void begin_verb();
-void begin_preposition();
-void begin_entity();
+void begin_verb(void);
+void begin_preposition(void);
+void begin_entity(void);
 void add_fragment(const char *str);
-void begin_call();
+void begin_call(const char *name, int nret);
 void end_call(int nret);
-void count_arg();
+void count_arg(void);
 
 %}
 
@@ -70,18 +70,18 @@ declentity      : ENTITY { begin_entity(); } synonyms PERIOD;
 declpreposition : PREPOSITION { begin_preposition(); } synonyms PERIOD;
 
 declfunction    : FUNCTION
-                  IDENTIFIER { begin_function(yytext); }
+                  IDENTIFIER { begin_function(yytext, 1); }
                   LPAREN optparameters RPAREN
-                  expression { end_function(1); };
+                  expression { end_function(); };
 
 declprocedure   : PROCEDURE
-                  IDENTIFIER { begin_function(yytext); }
+                  IDENTIFIER { begin_function(yytext, 0); }
                   LPAREN optparameters RPAREN
-                  block { end_function(0); };
+                  block { end_function(); };
 
 declcommand     : optcmdtok
-                  cmdfrags
-                  guard
+                  cmdfrags { begin_function(NULL, 1); /* guard */ }
+                  guard { begin_function(NULL, 0); /* body */ }
                   block { end_command(); };
 optcmdtok       : COMMAND
                 | ;
@@ -107,10 +107,7 @@ statements      : statements statement
 statement       : ifst
                 | setst SEMICOLON
                 | proc_call SEMICOLON
-                | string SEMICOLON { emit(OP_LLI, resolve_function("write"));
-                                     emit(OP_LLI, resolve_string());
-                                     emit(OP_CAL, 2); };
-                ;
+                | string SEMICOLON { write_string(); };
 
 ifst            : IF LPAREN expression RPAREN { emit(OP_JNP, -1); }
                   THEN block elseclause { patch_jmp(0); };
@@ -125,7 +122,7 @@ setst           : SET GLOBALVAR { dest = resolve_global(yytext); }
                   ATTRIBUTE { dest = resolve_property(yytext); }
                   expression { emit(OP_STI, dest); };
 
-proc_call       : IDENTIFIER { begin_call(yytext); }
+proc_call       : IDENTIFIER { begin_call(yytext, 0); }
                   LPAREN arguments RPAREN { end_call(0); };
 
 expression      : ifexpr;
@@ -163,7 +160,7 @@ varref          : entref ATTRIBUTE { emit(OP_LDI, resolve_property(yytext)); }
                 | LOCALVAR { emit(OP_LDL, resolve_local(yytext)); };
 entref          : FRAGMENT { emit(OP_LLI, resolve_fragment(yytext, F_ENTITY)); }
                 | LSQRBR expression RSQRBR;
-func_call       : IDENTIFIER { begin_call(yytext); }
+func_call       : IDENTIFIER { begin_call(yytext, 1); }
                   LPAREN arguments RPAREN { end_call(1); };
 arguments       : argument morearguments
                 | ;

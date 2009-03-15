@@ -147,7 +147,7 @@ static void dump_function_table(const char *data, size_t size, int instrs)
     }
 
     entries = get_int32(data + 4);
-    printf("Number of entries: %d\n", entries);
+    printf("Number of entries: %d\n\n", entries);
     data += 8, size -= 8;
 
     if (entries < 0 || entries > (size - 8)/8)
@@ -155,22 +155,26 @@ static void dump_function_table(const char *data, size_t size, int instrs)
         printf("Invalid number of entries!\n");
         return;
     }
+
+    printf("Function  Arguments Results   Offset    Size      Start instr.\n");
+    printf("--------- --------- --------- --------- --------- -----------\n");
     for (n = 0; n < entries; ++n)
     {
         int narg   = *(data + 8*n + 3);
         int nret   = *(data + 8*n + 2);
         int offset = get_int32(data + 8*n + 4);
+        int next_offset = (n + 1 < entries) ? get_int32(data + 8*(n + 1) + 4)
+                                            : size + 8;
 
-        printf("\nFunction %d:\n"
-               "\tArguments:         %6d\n"
-               "\tReturn values:     %6d\n"
-               "\tCode offset:       %6d\n"
-               "\tStart instruction: %6d\n",
-               n, narg, nret, offset, (offset - (8 + 8*entries))/4);
+        printf("%8d: %8d  %8d  %8d  %8d  %8d \n",
+               n, narg, nret, offset, next_offset - offset,
+               (offset - (8 + 8*entries))/4);
 
         if (offset%4 != 0 || offset < 8 + 8*entries || offset > size)
             printf("Code offset is invalid!\n");
     }
+    printf("--------- --------- --------- --------- --------- -----------\n");
+
     data += 8*entries, size -= 8*entries;
 
     if (instrs)
@@ -208,7 +212,7 @@ static void dump_command_table(const char *data, size_t size)
     }
 
     entries = get_int32(data + 4);
-    printf("Number of entries: %d\n", entries);
+    printf("Number of entries: %d\n\n", entries);
     data += 8, size -= 8;
 
     if (entries < 0)
@@ -217,9 +221,11 @@ static void dump_command_table(const char *data, size_t size)
         return;
     }
 
+    printf("Command Form    Verb    Object  Prepos. Obj. 2  Guard   Function\n");
+    printf("------- ------- ------- ------- ------- ------- ------- -------\n");
     for (n = 0; n < entries; ++n)
     {
-        int form, args, guard, func;
+        int form, args, verb, obj1, prep, obj2, guard, func;
 
         if (size < 4)
         {
@@ -241,7 +247,8 @@ static void dump_command_table(const char *data, size_t size)
                 printf("Invalid number of arguments: %d (expected 1).\n", args);
                 return;
             }
-            printf("\t%6d: verb=%d", n, get_int32(data + 4));
+            verb = get_int32(data + 4);
+            obj1 = prep = obj2 = -1;
             break;
 
         case 1:
@@ -250,8 +257,9 @@ static void dump_command_table(const char *data, size_t size)
                 printf("Invalid number of arguments: %d (expected 2).\n", args);
                 return;
             }
-            printf("\t%6d: verb=%d object=%d", n,
-                get_int32(data + 4), get_int32(data + 8));
+            verb = get_int32(data + 4);
+            obj1 = get_int32(data + 8);
+            prep = obj2 = -1;
             break;
 
         case 2:
@@ -260,24 +268,42 @@ static void dump_command_table(const char *data, size_t size)
                 printf("Invalid number of arguments: %d (expected 4).\n", args);
                 return;
             }
-            printf("\t%6d: verb=%d object=%d preposition=%d object=%d", n,
-                get_int32(data +  4), get_int32(data +  8),
-                get_int32(data + 12), get_int32(data + 16) );
+            verb = get_int32(data +  4);
+            obj1 = get_int32(data +  8);
+            prep = get_int32(data + 12);
+            obj2 = get_int32(data + 16);
             break;
 
         default:
             printf("Unrecognized command (form %d, %d argumens)", form, args);
         }
         guard = get_int32(data + 4 + 4*args);
-        if (guard == -1)
-            printf(" (no guard)");
-        else
-            printf(" (guard %d)", guard);
-        func = get_int32(data + 4 + 4*args + 4);
-        printf(" => function %d\n", func);
+        func  = get_int32(data + 4 + 4*args + 4);
         data += 4 + 4*args + 8;
         size -= 4 + 4*args + 8;
+
+        printf("%6d: %6d  %6d", n, form, verb);
+        if (obj1 == -1)
+            printf("       -");
+        else
+            printf("  %6d", obj1);
+        if (prep == -1)
+            printf("       -");
+        else
+            printf("  %6d", prep);
+        if (obj2 == -1)
+            printf("       -");
+        else
+            printf("  %6d", obj2);
+        if (guard == -1)
+            printf("       -");
+        else
+            printf("  %6d", obj2);
+        printf("  %6d\n", func);
+
     }
+    printf("------- ------- ------- ------- ------- ------- ------- -------\n");
+
 }
 
 static void dump(const char *opts, const char *data, size_t size)
@@ -351,7 +377,10 @@ int main(int argc, char *argv[])
     }
     if (argc == 2)
     {
-        path = argv[1];
+        if (argv[1][0] == '-')
+            opts = argv[1] + 1;
+        else
+            path = argv[1];
     }
     else
     if (argc == 3)

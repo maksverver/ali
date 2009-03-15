@@ -58,7 +58,7 @@ static Array ar_commands = AR_INIT(sizeof(Command));
 /* Used when parsing a function definition: */
 static char *func_name = NULL;
 static Array func_params = AR_INIT(sizeof(char*));
-static int func_nlocal = 0;
+static int func_nlocal = 0, func_nret = 0;
 static Array func_body = AR_INIT(sizeof(Instruction));
 static Array inv_stack = AR_INIT(sizeof(int));
 
@@ -136,23 +136,42 @@ int resolve_local(const char *id)
     return n;
 }
 
-int resolve_function(const char *id)
+int resolve_function(const char *id, int call_nret)
 {
+    int index = -1, nret = -1;
+
     /* Look up registered function */
     const void *f_idx;
     if (ST_find(&st_functions, id, &f_idx))
     {
-        return (long)f_idx;
+        index = (long)f_idx;
+        if (index < 0)
+            nret = 0;  // built-in procedure
+        else
+            nret  = ((Function*)AR_at(&ar_functions, index))->nret;
     }
-
-    /* Recognize current function name to allow recursive calls to be made */
+    else
     if (func_name != NULL && strcmp(id, func_name) == 0)
     {
-        return AR_size(&ar_functions);
+        /* Recursive call to current function */
+        index = AR_size(&ar_functions);
+        nret  = func_nret;
+    }
+    else
+    {
+        fatal("Reference to undeclared function \"%s\" on line %d.",
+            id, lineno + 1);
     }
 
-    fatal("Reference to undeclared function \"%s\" on line %d.",
-        id, lineno + 1);
+    if (nret == 1 && call_nret == 0)
+        fatal("Function called from statement on line %d.", lineno + 1);
+
+    if (nret == 0 && call_nret == 1)
+        fatal("Procedure called from expression on line %d.", lineno + 1);
+
+    assert(nret == call_nret);
+
+    return index;
 }
 
 int resolve_string()
@@ -167,6 +186,14 @@ int resolve_string()
     str_buf = NULL;
     str_len = 0;
     return (long)value;
+}
+
+void write_string()
+{
+    /* Pass current string literal to write */
+    emit(OP_LLI, resolve_function("write", 0));
+    emit(OP_LLI, resolve_string());
+    emit(OP_CAL, 2);
 }
 
 int resolve_symbol(const char *str)
@@ -220,13 +247,13 @@ void parse_string(const char *token)
     str_buf[str_len] = '\0';
 }
 
-void begin_function(const char *id)
+void begin_function(const char *id, int nret)
 {
     assert(func_name == NULL);
-    assert(id != NULL);
 
-    func_name   = strdup(id);
+    func_name   = (id == NULL ? NULL : strdup(id));
     func_nlocal = 0;
+    func_nret   = nret;
 }
 
 void add_parameter(const char *id)
@@ -235,7 +262,7 @@ void add_parameter(const char *id)
     AR_append(&func_params, &str);
 }
 
-void end_function(int func_nret)
+void end_function()
 {
     Function f;
     int n;
@@ -426,10 +453,12 @@ void begin_command(const char *str)
 
 void end_guard()
 {
+    assert(func_name == NULL);
+
     /* Terminate guard function */
     size_t guard = AR_size(&ar_functions);
-    func_name   = NULL;
-    end_function(1);
+    func_nret = 1;
+    end_function();
 
     /* Add guard to open commands */
     size_t n = AR_size(&ar_commands);
@@ -511,10 +540,10 @@ int resolve_fragment(const char *token, int type)
     return f->id;
 }
 
-void begin_call(const char *name)
+void begin_call(const char *name, int nret)
 {
     int nargs = 0;
-    emit(OP_LLI, resolve_function(name));
+    emit(OP_LLI, resolve_function(name, nret));
     AR_push(&inv_stack, &nargs);
 }
 
