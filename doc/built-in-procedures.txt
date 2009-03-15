@@ -2,6 +2,7 @@
 write(..)       Write each argument string to the screen, seperated by spaces.
 
 writeln(..)     As above, but ends the current line.
+                writeln("x") is equivalent to write("x\n")
 
 writef(..)      Write formatted output. The first argument is a format string,
                 which may contain the following special sequences:
@@ -10,7 +11,8 @@ writef(..)      Write formatted output. The first argument is a format string,
                     %i  is replaced by the next argument formatted as a
                         decimal integer
                     %d  is equivalent to %i
-
+                The effect is the same as passing the string obtained after
+                applying substitutions to write().
 
 choice(..)      Takes two or more string arguments. The first argument is the
                 query to display, the rest are the options. The result is one
@@ -20,6 +22,4 @@ pause()         Waits for user input before continuing.
 
 quit()          End the game. Does not return.
 
-restart()       Restarts the module, by reseting all variables to nil and
-                calling the initialization function again. Takes effect after
-                all current invocations have completed.
+reset()         Clears all global variables.

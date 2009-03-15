@@ -4,13 +4,22 @@ alic: (all of these can wait till later:)
  - Support for forward declarations of functions/procedures?
 
 ali:
- - Implement line wrapping when printing. Ensure input/output are seperated by
+ - Revise line wrapping.
+   Design and implementation should be simpler.
+
+   We'd like to accomodate for easy writing of large paragraphs, writing
+   blank rows between paragraphs, allow specific formatting with writef,
+   but still allow the user to do indentation.
+
+
+ Implement line wrapping when printing. Ensure input/output are seperated by
    a blank line. See built-in-procedures.txt for details.
  - Better line reading (readline? libedit? How to do portably?)
  - Port to Windows
  - Implement transcript logging
    include time, commands, output
  - Implement state saving/restoring (just store the transcript?)
+ - Should check that strings in string table are zero-terminated
 Low priority:
  - Use zlib to read gzip compressed module file
  - BUG: the interpreter will hang on (nearly) infinite loops

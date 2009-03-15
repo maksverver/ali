@@ -182,8 +182,8 @@ static void dump_function_table(const char *data, size_t size, int instrs)
         return;
     }
 
-    printf("Function  Arguments Results   Offset    Size      Start instr.\n");
-    printf("--------- --------- --------- --------- --------- -----------\n");
+    printf("Function  Arguments Results   Offset    Size      1st Instr.\n");
+    printf("--------- --------- --------- --------- --------- ---------\n");
     for (n = 0; n < entries; ++n)
     {
         int narg   = *(data + 8*n + 3);

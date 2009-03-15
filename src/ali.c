@@ -54,9 +54,9 @@ typedef struct Interpreter
     Module      *mod;
     Variables   *vars;
     Array       *stack;
-    bool        restart;
-    int         console_width;
-    int         print_column;
+
+    int         line_width;
+    int         line_pos;
 } Interpreter;
 
 
@@ -67,13 +67,13 @@ Value builtin_writeln (Interpreter *I, int narg, Value *args);
 Value builtin_writef  (Interpreter *I, int narg, Value *args);
 Value builtin_choice  (Interpreter *I, int narg, Value *args);
 Value builtin_pause   (Interpreter *I, int narg, Value *args);
-Value builtin_restart (Interpreter *I, int narg, Value *args);
+Value builtin_reset   (Interpreter *I, int narg, Value *args);
 Value builtin_quit    (Interpreter *I, int narg, Value *args);
 
 #define NBUILTIN 7
 Builtin builtins[NBUILTIN] = {
     builtin_write, builtin_writeln, builtin_writef, builtin_choice,
-    builtin_pause, builtin_restart, builtin_quit };
+    builtin_pause, builtin_reset,   builtin_quit };
 
 
 
@@ -205,10 +205,12 @@ static bool read_fragment_table(FILE *fp, Module *mod)
 
     for (n = 0; n < entries; ++n)
     {
-        int type, id, offset;
+        int type, flags, id, offset;
 
-        type = read_int8(fp);
-        id   = read_int24(fp);
+        type  = read_int8(fp);
+        flags = (type >> 4)&0xf0;
+        type  = (type >> 0)&0x0f;
+        id    = read_int24(fp);
         if (id < 0 || id > (type == F_VERB ? mod->num_verbs :
                             type == F_PREPOSITION ? mod->num_prepositions :
                             type == F_ENTITY ? mod->num_entities : -1) )
@@ -219,9 +221,10 @@ static bool read_fragment_table(FILE *fp, Module *mod)
             return false;
         offset -= 8 + 8*entries;
 
-        mod->fragments[n].type = type;
-        mod->fragments[n].id   = id;
-        mod->fragments[n].str  = (char*)mod->fragment_data + offset;
+        mod->fragments[n].type  = type;
+        mod->fragments[n].id    = id;
+        mod->fragments[n].str   = (char*)mod->fragment_data + offset;
+        mod->fragments[n].canon = (flags&1) != 0;
     }
 
     size -= 8 + 8*entries;
@@ -528,7 +531,7 @@ Value exec_function(Interpreter *I, const Function *f, int stack_base)
     {
         int opcode   = i->opcode;
         int argument = i->argument;
-        /* info("Instruction %d", i - (Instruction*)state->mod->function_data); */
+        /* info("Instruction %d", i - (Instruction*)I->mod->function_data); */
         ++i;
 
         switch(opcode)
@@ -777,46 +780,175 @@ void invoke(Interpreter *I, int nargs, int nret)
         AR_push(I->stack, &result);
 }
 
-Value builtin_write(Interpreter *I, int narg, Value *args)
+static const char *get_string(const Interpreter *I, Value v)
 {
-    int n, m;
-    for (n = 0; n < narg; ++n)
+    if (v == val_nil)
+        return "(nil)";
+
+    int n = (int)v;
+    if (n < 0 || n >= I->mod->nstring)
+        return "(err)";
+
+    return I->mod->strings[n];
+}
+
+/* Inserts a space if we're not at the beginning of the line. */
+void write_space(Interpreter *I)
+{
+    if (I->line_pos == 0) return;
+    fputc(' ', stdout);
+    if (++I->line_pos == I->line_width)
     {
-        if (args[n] == val_nil)
+        fputc('\n', stdout);
+        I->line_pos = 0;
+    }
+}
+
+/* Writes a line-wrapped string */
+void write_str(Interpreter *I, const char *i, const char *j)
+{
+    while (i < j)
+    {
+        while (i < j && *i == '\n')
         {
-            if (n > 0)
-                fputc(' ', stdout);
-            fputs("(nil)", stdout);
+            fputc('\n', stdout);
+            I->line_pos = 0;
+            ++i;
+        }
+        while (i < j && *i == ' ')
+        {
+            write_space(I);
+            ++i;
+        }
+        if (i == j) break;
+
+        const char *k = i + 1;
+        while (k < j && *k != ' ' && *k != '\n') ++k;
+        if (k - i > I->line_width)
+        {
+            /* Way too long, just place it here */
+            if (I->line_pos > 0)
+                fputc('\n', stdout);
+            fwrite(i, 1, k - i, stdout);
+            fputc('\n', stdout);
+            I->line_pos = 0;
+        }
+        else
+        if (k - i > I->line_width - I->line_pos)
+        {
+            /* Start new line */
+            fputc('\n', stdout);
+            fwrite(i, 1, k - i, stdout);
+            I->line_pos = k - i;
         }
         else
         {
-            m = (int)args[n];
-            if (m < 0 || m >= I->mod->nstring)
-            {
-                error("write: invalid argument %d (string table has %d entries)",
-                    m, I->mod->nstring);
-            }
-            else
-            {
-                if (n > 0)
-                    fputc(' ', stdout);
-                fputs(I->mod->strings[m], stdout);
-            }
+            /* Append to current line */
+            fwrite(i, 1, k - i, stdout);
+            I->line_pos += k - i;
         }
+        i = k;
     }
-    fputc('\n', stdout);
+}
+
+void write_char(Interpreter *I, char ch)
+{
+    return write_str(I, &ch, &ch + 1);
+}
+
+Value builtin_write(Interpreter *I, int narg, Value *args)
+{
+    int n;
+    for (n = 0; n < narg; ++n)
+    {
+        write_space(I);
+        const char *s = get_string(I, args[n]);
+        write_str(I, s, s + strlen(s));
+    }
     return val_nil;
 }
 
 Value builtin_writeln(Interpreter *I, int narg, Value *args)
 {
-    /* TODO */
+    builtin_write(I, narg, args);
+    write_char(I, '\n');
     return val_nil;
 }
 
 Value builtin_writef(Interpreter *I, int narg, Value *args)
 {
-    /* TODO */
+    if (narg == 0)
+    {
+        error("writef() called without arguments");
+        return val_nil;
+    }
+
+    int a = 1;
+    const char *p = get_string(I, args[0]);
+    while (*p != '\0')
+    {
+        /* Do substitutions */
+        while (*p == '%')
+        {
+            ++p;  /* skip escape character */
+
+            if (*p == '\0')
+            {
+                /* Single % at the end of a string */
+                write_char(I, '%');
+                break;
+            }
+
+            if (*p == '%')
+            {
+                /* Write literal percent sign */
+                write_char(I, '%');
+            }
+            else
+            if (*p == 'd' || *p == 'i')
+            {
+                if (a == narg)
+                {
+                    warn("Too few arguments in call to writef()");
+                }
+                else
+                {
+                    /* Write integer argument */
+                    int i = (int)args[a++];
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%d", i);
+                    write_str(I, buf, buf + strlen(buf));
+                }
+            }
+            else
+            if (*p == 's')
+            {
+                if (a == narg)
+                {
+                    warn("Too few arguments in call to writef()");
+                }
+                else
+                {
+                    /* Write string argument */
+                    const char *s = get_string(I, args[a++]);
+                    write_str(I, s, s + strlen(s));
+                }
+            }
+
+            ++p;  /* skip formatting character too */
+        }
+
+        const char *q = p;
+        while (*q != '%' && *q != '\0') ++q;
+        write_str(I, p, q);
+        p = q;
+    }
+
+    if (a < narg)
+    {
+        warn("Too many arguments in call to writef()");
+    }
+
     return val_nil;
 }
 
@@ -831,13 +963,16 @@ Value builtin_pause(Interpreter *I, int narg, Value *args)
     char line[1024];
     fputs("Press Enter to continue...\n", stdout);
     fflush(stdout);
-    if (!fgets(line, sizeof(line), stdin)) { }
+    fgets(line, sizeof(line), stdin);
     return val_nil;
 }
 
-Value builtin_restart(Interpreter *I, int narg, Value *args)
+Value builtin_reset(Interpreter *I, int narg, Value *args)
 {
-    I->restart = true;
+    /* Initialize global variables to nil */
+    int n;
+    for (n = 0; n < I->vars->nval; ++n)
+        I->vars->vals[n] = val_nil;
     return val_nil;
 }
 
@@ -1045,11 +1180,8 @@ void command_loop(Interpreter *I)
     char line[1024];
     for (;;)
     {
-        if (I->restart)
-        {
-            restart(I);
-            I->restart = false;
-        }
+        if (I->line_pos > 0)
+            write_char(I, '\n');
 
         fputs("\n> ", stdout);
         fflush(stdout);
@@ -1070,7 +1202,6 @@ void command_loop(Interpreter *I)
         }
 
         normalize(line);
-        I->print_column = 0;
         process_command(I, line);
     }
 }
@@ -1107,11 +1238,11 @@ int main(int argc, char *argv[])
         fatal("Could not create interpreter state.");
 
     /* Allocate rest of interpreter */
-    interpreter.restart       = true;
-    interpreter.console_width = 80;
-    interpreter.print_column  =  0;
+    interpreter.line_width    = 80;
+    interpreter.line_pos      =  0;
 
     /* Initialize vars */
+    restart(&interpreter);
     command_loop(&interpreter);
     warn("Unexpected end of input!");
     quit(&interpreter, 1);
