@@ -592,8 +592,10 @@ static bool write_int32(FILE *fp, int i)
 
 static bool write_alio_header(FILE *fp)
 {
-    const void *init_idx = NULL;
-    ST_find(&st_functions, "initialize", &init_idx);
+    int init_func = -1;
+    const void *init_idx;
+    if (ST_find(&st_functions, "initialize", &init_idx))
+        init_func = (long)init_idx;
 
     return
         write_int32(fp, 32) &&      /* header size: 32 bytes */
@@ -604,7 +606,7 @@ static bool write_alio_header(FILE *fp)
         write_int32(fp, num_entities) &&
         write_int32(fp, AR_size(&ar_properties)) &&
         write_int32(fp, AR_size(&ar_vars)) &&
-        write_int32(fp, init_idx == NULL ? -1 : (long)init_idx);
+        write_int32(fp, init_func);
 }
 
 static int cmp_fragments(const void *a, const void *b)
