@@ -1,4 +1,3 @@
-
 write(..)       Write each argument string to the screen, seperated by spaces.
 
 writeln(..)     As above, but ends the current line.
@@ -13,10 +12,6 @@ writef(..)      Write formatted output. The first argument is a format string,
                     %d  is equivalent to %i
                 The effect is the same as passing the string obtained after
                 applying substitutions to write().
-
-choice(..)      Takes two or more string arguments. The first argument is the
-                query to display, the rest are the options. The result is one
-                of the option arguments.
 
 pause()         Waits for user input before continuing.
 

@@ -69,7 +69,7 @@ static size_t str_len = 0;
 
 /* Built-in functions are declared here. */
 static const char *builtin_names[] = {
-    "write", "writeln", "writef", "choice", "pause", "reset", "quit", NULL };
+    "write", "writeln", "writef", "pause", "reset", "quit", NULL };
 
 void yyerror(const char *str)
 {

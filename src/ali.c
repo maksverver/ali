@@ -65,14 +65,13 @@ typedef Value (*Builtin)(Interpreter *I, int narg, Value *args);
 Value builtin_write   (Interpreter *I, int narg, Value *args);
 Value builtin_writeln (Interpreter *I, int narg, Value *args);
 Value builtin_writef  (Interpreter *I, int narg, Value *args);
-Value builtin_choice  (Interpreter *I, int narg, Value *args);
 Value builtin_pause   (Interpreter *I, int narg, Value *args);
 Value builtin_reset   (Interpreter *I, int narg, Value *args);
 Value builtin_quit    (Interpreter *I, int narg, Value *args);
 
-#define NBUILTIN 7
+#define NBUILTIN 6
 Builtin builtins[NBUILTIN] = {
-    builtin_write, builtin_writeln, builtin_writef, builtin_choice,
+    builtin_write, builtin_writeln, builtin_writef,
     builtin_pause, builtin_reset,   builtin_quit };
 
 
@@ -949,12 +948,6 @@ Value builtin_writef(Interpreter *I, int narg, Value *args)
         warn("Too many arguments in call to writef()");
     }
 
-    return val_nil;
-}
-
-Value builtin_choice(Interpreter *I, int narg, Value *args)
-{
-    /* TODO */
     return val_nil;
 }
 
