@@ -34,7 +34,7 @@ static ScapegoatTree st_strings = ST_INIT(
     (EA_cmp)strcmp, (EA_dup)strdup, (EA_free)free, EA_no_dup, EA_no_free );
 
 /* Symbol table */
-static Array ar_symbols = AR_INIT(sizeof(char*));
+static int next_symbol_id = -1;  /* symbols are numbered -1, -2, etc. */
 static ScapegoatTree st_symbols = ST_INIT(
     (EA_cmp)strcmp, (EA_dup)strdup, (EA_free)free, EA_no_dup, EA_no_free );
 
@@ -198,10 +198,10 @@ void write_string()
 
 int resolve_symbol(const char *str)
 {
-    const void *value = (void*)ST_size(&st_symbols);
+    const void *value = (void*)next_symbol_id;
     const void *key   = str;
     if (!ST_find_or_insert_entry(&st_symbols, &key, &value))
-        AR_append(&ar_symbols, &key);
+        --next_symbol_id;
     return (long)value;
 }
 
@@ -218,29 +218,57 @@ void parse_string(const char *token)
 {
     /* Extend string buffer to accommodate token */
     size_t token_len = strlen(token);
-    assert(token[0] == '"');
-    assert(token[token_len - 1] == '"');
-    str_buf = realloc(str_buf, str_len + token_len - 2 + 1);
+    if (token[0] == '"')
+    {
+        token++;
+        token_len--;
+        assert(token[token_len - 1] == '"');
+        token_len--;
+    }
+    else
+    if (token[0] == '!')
+    {
+        token++;
+        token_len--;
+        if (token[token_len - 1] == '\n')
+            token_len--;
+    }
+    else
+    {
+        assert(false);
+        return;
+    }
+
+    /* Allocate space for the new string */
+    str_buf = realloc(str_buf, str_len + token_len + 1);
     assert(str_buf != NULL);
 
     /* Add token to string buffer, unescaping in the process. */
-    size_t pos;
-    for (pos = 1; pos < token_len - 1; ++pos)
+    int pos = 0;
+    while (pos < token_len)
     {
-        if (token[pos] != '\\')
+        if (token[pos] == '\\')
         {
-            str_buf[str_len++] = token[pos];
-        }
-        else
-        {
-            char ch;
-            switch (token[++pos])
+            if (token[pos + 1] == '\\')
             {
-            case 'n': ch = '\n'; break;
-            default: ch = token[pos]; break;
+                str_buf[str_len++] = '\\';
+                pos += 2;
+                continue;
             }
-            str_buf[str_len++] = ch;
+            if (token[pos + 1] == 'n')
+            {
+                str_buf[str_len++] = '\n';
+                pos += 2;
+                continue;
+            }
+            if (token[pos + 1] == 't')
+            {
+                str_buf[str_len++] = '\t';
+                pos += 2;
+                continue;
+            }
         }
+        str_buf[str_len++] = token[pos++];
     }
 
     /* Zero-terminate string */
@@ -566,6 +594,18 @@ void end_call(int nret)
     emit(OP_CAL, 256*nret + (1 + nargs));
 }
 
+/* Bind a new symbol to the current entity. */
+void bind_sym_ent_ref(const char *str)
+{
+    const void *value = (void*)fragment.id;
+    const void *key   = str;
+    if (ST_find_or_insert_entry(&st_symbols, &key, &value))
+    {
+        fatal("Attempt to rebind symbol %s on line %d.\n", str, lineno + 1);
+    }
+    return;
+}
+
 static bool write_int8(FILE *fp, int i)
 {
     unsigned char bytes[1] = { i&255 };
@@ -852,7 +892,6 @@ void parser_destroy()
     ST_destroy(&st_properties);
     AR_destroy(&ar_strings);
     ST_destroy(&st_strings);
-    AR_destroy(&ar_symbols);
     ST_destroy(&st_symbols);
     AR_destroy(&ar_fragments);
     ST_destroy(&st_fragments);

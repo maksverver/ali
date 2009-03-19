@@ -36,6 +36,7 @@ void add_synonym(const char *str);
 void begin_call(const char *name, int nret);
 void end_call(int nret);
 void count_arg(void);
+void bind_sym_ent_ref(const char *token);
 
 %}
 
@@ -45,7 +46,7 @@ void count_arg(void);
 %token EQUAL INEQUAL AND OR NOT TRUE FALSE NIL
 %token LPAREN RPAREN LCURBR RCURBR LSQRBR RSQRBR
 %token PERIOD COMMA SEMICOLON
-%token STRING INTEGER
+%token STRING INTEGER OUTPUT
 %token IDENTIFIER ATTRIBUTE SYMBOL GLOBALVAR LOCALVAR
 %token ERROR
 
@@ -65,8 +66,11 @@ decl            : declverb
 
 declverb        : VERB { begin_verb(); } synonyms PERIOD;
 
-declentity      : ENTITY { begin_entity(); } synonyms PERIOD;
-
+declentity      : ENTITY { begin_entity(); } entdecl;
+entdecl         : symentref synonyms PERIOD
+                | symentref PERIOD
+                | synonyms PERIOD;
+symentref       : SYMBOL { bind_sym_ent_ref(yytext); };
 declpreposition : PREPOSITION { begin_preposition(); } synonyms PERIOD;
 
 declfunction    : FUNCTION
@@ -107,7 +111,7 @@ statements      : statements statement
 statement       : ifst
                 | setst SEMICOLON
                 | proc_call SEMICOLON
-                | string SEMICOLON { write_string(); };
+                | output { write_string(); };
 
 ifst            : IF LPAREN expression RPAREN { emit(OP_JNP, -1); }
                   THEN block elseclause { patch_jmp(0); };
@@ -147,7 +151,7 @@ baseexpr        : NIL       { emit(OP_LLI, -1); }
                 | FALSE     { emit(OP_LLI, 0); }
                 | string    { emit(OP_LLI, resolve_string()); }
                 | INTEGER   { emit(OP_LLI, atoi(yytext)); }
-                | SYMBOL    { emit(OP_LLI, -2 - resolve_symbol(yytext)); }
+                | SYMBOL    { emit(OP_LLI, resolve_symbol(yytext)); }
                 | LPAREN expression RPAREN
                 | func_call
                 | entref
@@ -155,6 +159,9 @@ baseexpr        : NIL       { emit(OP_LLI, -1); }
 string          : string strtok
                 | strtok;
 strtok          : STRING { parse_string(yytext); };
+output          : output outtok
+                | outtok;
+outtok          : OUTPUT { parse_string(yytext); };
 varref          : entref ATTRIBUTE { emit(OP_LDI, resolve_property(yytext)); }
                 | GLOBALVAR { emit(OP_LDG, resolve_global(yytext)); }
                 | LOCALVAR { emit(OP_LDL, resolve_local(yytext)); };

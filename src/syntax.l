@@ -42,7 +42,7 @@ nil                             return NIL;
 \,                              return COMMA;
 \;                              return SEMICOLON;
 
-\"(\\\"|[^\"])*\"               return STRING;
+\"(\\\"|[^\"\n])*\"             return STRING;
 0|[1-9][0-9]*|-[1-9][0-9]*      return INTEGER;
 
 [a-zA-Z_][a-zA-Z0-9_]*          return IDENTIFIER;
@@ -51,10 +51,10 @@ nil                             return NIL;
 [@][a-zA-Z_][a-zA-Z0-9_]*       return GLOBALVAR;
 [$][a-zA-Z_][a-zA-Z0-9_]*       return LOCALVAR;
 
-
-#.*(\n|$)                       { lineno++; }   /* ignore single-line comment */
-[ \t\r]+                                        /* ignore whitespace */
-\n                              { lineno++; }   /* ignore whitespace */
+![^\n]*(\n|$)                   lineno++; return OUTPUT;
+#[^\n]*(\n|$)                   lineno++;   /* ignore single-line comment */
+[ \t\r]+                                    /* ignore whitespace */
+\n                              lineno++;   /* ignore whitespace */
 
 .                               return ERROR;
 

@@ -55,8 +55,7 @@ typedef struct Interpreter
     Variables   *vars;
     Array       *stack;
 
-    int         line_width;
-    int         line_pos;
+    int         num_newlines;
 } Interpreter;
 
 
@@ -512,6 +511,10 @@ void restart(Interpreter *I)
     for (n = 0; n < I->vars->nval; ++n)
         I->vars->vals[n] = val_nil;
 
+    /* Reset output formatting */
+    fputc('\n', stdout);
+    I->num_newlines = 2;
+
     /* Call initialization function (if we have one) */
     if (I->mod->init_func != -1)
     {
@@ -791,68 +794,41 @@ static const char *get_string(const Interpreter *I, Value v)
     return I->mod->strings[n];
 }
 
-/* Inserts a space if we're not at the beginning of the line. */
-void write_space(Interpreter *I)
+/* Outputs a single character (but with a little formatting) */
+void write_ch(Interpreter *I, char ch)
 {
-    if (I->line_pos == 0) return;
-    fputc(' ', stdout);
-    if (++I->line_pos == I->line_width)
+    switch (ch)
     {
-        fputc('\n', stdout);
-        I->line_pos = 0;
+    case ' ':
+        if (I->num_newlines == 0)
+            fputc(' ', stdout);
+        break;
+
+    case '\t':
+        /* Tab can be used to indent */
+        fputs("    ", stdout);
+        I->num_newlines = 0;
+        break;
+
+    case '\n':
+        if (I->num_newlines < 2)
+        {
+            fputc('\n', stdout);
+            I->num_newlines++;
+        }
+        break;
+
+    default:
+        fputc(ch, stdout);
+        I->num_newlines = 0;
+        break;
     }
 }
 
 /* Writes a line-wrapped string */
 void write_str(Interpreter *I, const char *i, const char *j)
 {
-    while (i < j)
-    {
-        while (i < j && *i == '\n')
-        {
-            fputc('\n', stdout);
-            I->line_pos = 0;
-            ++i;
-        }
-        while (i < j && *i == ' ')
-        {
-            write_space(I);
-            ++i;
-        }
-        if (i == j) break;
-
-        const char *k = i + 1;
-        while (k < j && *k != ' ' && *k != '\n') ++k;
-        if (k - i > I->line_width)
-        {
-            /* Way too long, just place it here */
-            if (I->line_pos > 0)
-                fputc('\n', stdout);
-            fwrite(i, 1, k - i, stdout);
-            fputc('\n', stdout);
-            I->line_pos = 0;
-        }
-        else
-        if (k - i > I->line_width - I->line_pos)
-        {
-            /* Start new line */
-            fputc('\n', stdout);
-            fwrite(i, 1, k - i, stdout);
-            I->line_pos = k - i;
-        }
-        else
-        {
-            /* Append to current line */
-            fwrite(i, 1, k - i, stdout);
-            I->line_pos += k - i;
-        }
-        i = k;
-    }
-}
-
-void write_char(Interpreter *I, char ch)
-{
-    return write_str(I, &ch, &ch + 1);
+    while (i != j) write_ch(I, *i++);
 }
 
 Value builtin_write(Interpreter *I, int narg, Value *args)
@@ -860,7 +836,7 @@ Value builtin_write(Interpreter *I, int narg, Value *args)
     int n;
     for (n = 0; n < narg; ++n)
     {
-        write_space(I);
+        write_ch(I, ' ');
         const char *s = get_string(I, args[n]);
         write_str(I, s, s + strlen(s));
     }
@@ -870,7 +846,7 @@ Value builtin_write(Interpreter *I, int narg, Value *args)
 Value builtin_writeln(Interpreter *I, int narg, Value *args)
 {
     builtin_write(I, narg, args);
-    write_char(I, '\n');
+    write_ch(I, '\n');
     return val_nil;
 }
 
@@ -894,14 +870,14 @@ Value builtin_writef(Interpreter *I, int narg, Value *args)
             if (*p == '\0')
             {
                 /* Single % at the end of a string */
-                write_char(I, '%');
+                write_ch(I, '%');
                 break;
             }
 
             if (*p == '%')
             {
                 /* Write literal percent sign */
-                write_char(I, '%');
+                write_ch(I, '%');
             }
             else
             if (*p == 'd' || *p == 'i')
@@ -1173,10 +1149,10 @@ void command_loop(Interpreter *I)
     char line[1024];
     for (;;)
     {
-        if (I->line_pos > 0)
-            write_char(I, '\n');
+        write_ch(I, '\n');
+        write_ch(I, '\n');
 
-        fputs("\n> ", stdout);
+        fputs("> ", stdout);
         fflush(stdout);
         char *line_ptr = fgets(line, sizeof(line), stdin);
         fputc('\n', stdout);
@@ -1212,6 +1188,8 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    memset(&interpreter, 0, sizeof(interpreter));
+
     /* Attempt to load executable module */
     path = (argc == 2 ? argv[1] :"module.alo");
     fp = fopen(path, "rb");
@@ -1229,10 +1207,6 @@ int main(int argc, char *argv[])
     interpreter.vars = alloc_vars(interpreter.mod);
     if (interpreter.vars == NULL)
         fatal("Could not create interpreter state.");
-
-    /* Allocate rest of interpreter */
-    interpreter.line_width    = 80;
-    interpreter.line_pos      =  0;
 
     /* Initialize vars */
     restart(&interpreter);

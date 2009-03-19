@@ -2,37 +2,20 @@
 
 alic: (all of these can wait till later:)
  - Support for forward declarations of functions/procedures?
- - Support for binding symbols to entities?
 
 ali:
- - Reimplement interpreter code as a reusable library.
- 
- - To be determined: implement choice() built-in function? How should it work? 
-
- - Revise line wrapping.
-   Design and implementation should be simpler.
-
-   We'd like to accomodate for easy writing of large paragraphs, writing
-   blank rows between paragraphs, allow specific formatting with writef,
-   but still allow the user to do indentation.
-   
-   Proposal: let the terminal do the line wrapping (this works on Windows with
-   cmd.exe and on Linux), condense all consecutive whitespace to a single space.
-   Then, we have just line breaks (\n) and paragraph breaks (\n\n) to deal with.
-
-   More than two consecutive newlines are not allowed. Force a paragraph break
-   after displaying command output in the interpreter.
-
-   TODO: replace (single) newlines in string literals with spaces, so we can
-   write multi-line paragraphs with getting line breaks in the output.
-
- - Implement transcript logging
+ - Implement transcript logging:
    include time, commands, output
  - Implement state saving/restoring (just store the transcript?)
+Later:
+ - Reimplement interpreter code as a reusable library.
+ - All output should be written to a buffer, and then line-wrapped on display.
+   (Makes more sense to do this in an interpreter library.) 
 Low priority:
  - Use zlib to read gzip compressed module file
  - BUG: the interpreter will hang on (nearly) infinite loops
  - BUG: should enforce that strings in string table are zero-terminated
+ - To be determined: implement choice() built-in function? How should it work? 
 
 Documentation:
  - finish language documentation

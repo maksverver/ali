@@ -1,13 +1,7 @@
 function test($arg, $foo, $bar)
-{
-   if ($arg) {
-       return $foo;
-   } else {
-       return $bar;
-   }
-}
+   if ($arg) then $foo else $bar
 
-function initialize()
+procedure initialize()
 {
     write(test(false, "Bonjour", "Hello"));
     write(test(true, "World", "Monde"));

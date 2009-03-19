@@ -50,9 +50,9 @@ static void dump_header(const char *data, size_t size)
     nverb = get_int32(data +  8);
     nprep = get_int32(data + 12);
     nent  = get_int32(data + 16);
-    verbs = malloc(sizeof(char*)*nverb);
-    preps = malloc(sizeof(char*)*nprep);
-    ents  = malloc(sizeof(char*)*nent);
+    verbs = calloc(nverb, sizeof(char*));
+    preps = calloc(nprep, sizeof(char*));
+    ents  = calloc(nent,  sizeof(char*));
     printf("File version:                %4d.%d\n", (version >> 8)&255, version&255);
     printf("Number of verbs:             %6d\n", nverb);
     printf("Number of prepositions:      %6d\n", nprep);
