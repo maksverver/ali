@@ -825,10 +825,14 @@ void write_ch(Interpreter *I, char ch)
     }
 }
 
-/* Writes a line-wrapped string */
-void write_str(Interpreter *I, const char *i, const char *j)
+void write_buf(Interpreter *I, const char *i, const char *j)
 {
     while (i != j) write_ch(I, *i++);
+}
+
+void write_str(Interpreter *I, const char *s)
+{
+    while (*s != '\0') write_ch(I, *s++);
 }
 
 Value builtin_write(Interpreter *I, int narg, Value *args)
@@ -837,8 +841,7 @@ Value builtin_write(Interpreter *I, int narg, Value *args)
     for (n = 0; n < narg; ++n)
     {
         write_ch(I, ' ');
-        const char *s = get_string(I, args[n]);
-        write_str(I, s, s + strlen(s));
+        write_str(I, get_string(I, args[n]));
     }
     return val_nil;
 }
@@ -892,7 +895,7 @@ Value builtin_writef(Interpreter *I, int narg, Value *args)
                     int i = (int)args[a++];
                     char buf[32];
                     snprintf(buf, sizeof(buf), "%d", i);
-                    write_str(I, buf, buf + strlen(buf));
+                    write_str(I, buf);
                 }
             }
             else
@@ -905,8 +908,7 @@ Value builtin_writef(Interpreter *I, int narg, Value *args)
                 else
                 {
                     /* Write string argument */
-                    const char *s = get_string(I, args[a++]);
-                    write_str(I, s, s + strlen(s));
+                    write_str(I, get_string(I, args[a++]));
                 }
             }
 
@@ -915,7 +917,7 @@ Value builtin_writef(Interpreter *I, int narg, Value *args)
 
         const char *q = p;
         while (*q != '%' && *q != '\0') ++q;
-        write_str(I, p, q);
+        write_buf(I, p, q);
         p = q;
     }
 
@@ -1099,7 +1101,7 @@ static void process_command(Interpreter *I, char *line)
     Command cmd;
     if (!parse_command(I->mod, line, &cmd))
     {
-        printf("I didn't understand that.\n");
+        write_str(I, "I didn't understand that.\n");
         return;
     }
 
@@ -1121,19 +1123,19 @@ static void process_command(Interpreter *I, char *line)
 
     if (num_matched == 0)
     {
-        printf("You can't do that in this game.\n");
+        write_str(I, "You can't do that in this game.\n");
         return;
     }
 
     if (num_active == 0)
     {
-        printf("That's not possible right now.\n");
+        write_str(I, "That's not possible right now.\n");
         return;
     }
 
     if (num_active  > 1)
     {
-        printf("That command is ambiguous.\n");
+        write_str(I, "That command is ambiguous.\n");
         return;
     }
 
@@ -1182,7 +1184,7 @@ int main(int argc, char *argv[])
     const char *path;
     FILE *fp;
 
-    if (argc > 2)
+    if (argc > 2 || (argc > 1 && argv[1][0] == '-'))
     {
         printf("Usage: ali [<module>]\n");
         return 0;
