@@ -419,6 +419,7 @@ int main(int argc, char *argv[])
     FILE *fp;
     char *data;
     size_t size;
+    int n;
 
     if (argc > 3 || (argc > 2 && argv[1][0] != '-'))
     {
@@ -472,8 +473,21 @@ int main(int argc, char *argv[])
     }
     fclose(fp);
 
+    /* Dump selected sections */
     dump(opts, data, size);
     printf("\n");
+
+    /* Free memory */
+    free(data);
+    for (n = 0; n < nverb; ++n)
+        free(verbs[n]);
+    free(verbs);
+    for (n = 0; n < nprep; ++n)
+        free(preps[n]);
+    free(preps);
+    for (n = 0; n < nent; ++n)
+        free(ents[n]);
+    free(ents);
 
     return 0;
 }

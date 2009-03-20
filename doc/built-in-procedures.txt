@@ -17,4 +17,4 @@ pause()         Waits for user input before continuing.
 
 quit()          End the game. Does not return.
 
-reset()         Clears all global variables.
+reset()         Resets all variables to nil.

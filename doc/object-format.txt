@@ -45,7 +45,7 @@ Function table
   4   xx xx xx xx   Offset relative to start of function table
                     Offset must be in range [8 + 8*E, S)
   Then:
-  4*N               32-bit encoded instructions
+                    32-bit encoded instructions
                     Blocks are seperated by null-instructions (00 00 00 00)
   For each instruction:
   4   oo aa aa aa   Instruction with opcode "oo" and argument "aa".

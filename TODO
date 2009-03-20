@@ -1,4 +1,5 @@
 - Check memory use with valgrind (interpreter only?)
+  Must disable mudflap before doing this.
 
 alic: (all of these can wait till later:)
  - Support for forward declarations of functions/procedures?
@@ -7,15 +8,19 @@ ali:
  - Implement transcript logging:
    include time, commands, output
  - Implement state saving/restoring (just store the transcript?)
-Later:
- - Reimplement interpreter code as a reusable library.
- - All output should be written to a buffer, and then line-wrapped on display.
-   (Makes more sense to do this in an interpreter library.) 
 Low priority:
- - Use zlib to read gzip compressed module file
+ - Compress module data using gzip/lzma/bzip2?
+   Benefits:
+     - smaller games (obviously); interpreter is already very small.
+     - game is obfuscated a bit to deter cheating
+   What format to use?
+     - candidates: gzip (zlib), bzip2, maybe lzma (there is a pure C library
+       for decompression only)
+   This would be nice to obfuscate the code a little too.
+   Makes sense only after writing a larger module and determining which formats
+   give good compression. Take memory use into account, and additional code
+   size incurred by including the decompression library.
  - BUG: the interpreter will hang on (nearly) infinite loops
- - BUG: should enforce that strings in string table are zero-terminated
- - To be determined: implement choice() built-in function? How should it work? 
 
 Documentation:
  - finish language documentation

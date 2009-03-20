@@ -66,11 +66,6 @@ static Array inv_stack = AR_INIT(sizeof(int));
 static char *str_buf = NULL;
 static size_t str_len = 0;
 
-
-/* Built-in functions are declared here. */
-static const char *builtin_names[] = {
-    "write", "writeln", "writef", "pause", "reset", "quit", NULL };
-
 void yyerror(const char *str)
 {
     fprintf(stderr, "Parse error on line %d: %s [%s]\n", lineno + 1, str, yytext);
@@ -198,7 +193,7 @@ void write_string()
 
 int resolve_symbol(const char *str)
 {
-    const void *value = (void*)next_symbol_id;
+    const void *value = (void*)(long)next_symbol_id;
     const void *key   = str;
     if (!ST_find_or_insert_entry(&st_symbols, &key, &value))
         --next_symbol_id;
@@ -597,7 +592,7 @@ void end_call(int nret)
 /* Bind a new symbol to the current entity. */
 void bind_sym_ent_ref(const char *str)
 {
-    const void *value = (void*)fragment.id;
+    const void *value = (void*)(long)fragment.id;
     const void *key   = str;
     if (ST_find_or_insert_entry(&st_symbols, &key, &value))
     {
@@ -872,7 +867,7 @@ void create_object_file()
 void parser_create()
 {
     /* Register built-in functions */
-    const char **name;
+    const char * const *name;
     long func_id = 0;
     for (name = builtin_names; *name != NULL; ++name)
         ST_insert(&st_functions, *name, (void*)--func_id);
@@ -895,6 +890,17 @@ void parser_destroy()
     ST_destroy(&st_symbols);
     AR_destroy(&ar_fragments);
     ST_destroy(&st_fragments);
+    while (!AR_empty(&ar_functions))
+    {
+        Function *f = AR_last(&ar_functions);
+        free(f->instrs);
+        AR_pop(&ar_functions, NULL);
+    }
+    AR_destroy(&ar_functions);
+    ST_destroy(&st_functions);
+    AR_destroy(&ar_commands);
+    AR_destroy(&func_body);
+    AR_destroy(&inv_stack);
 }
 
 int main(int argc, char *argv[])
