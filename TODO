@@ -5,9 +5,6 @@ alic: (all of these can wait till later:)
  - Support for forward declarations of functions/procedures?
 
 ali:
- - Implement transcript logging:
-   include time, commands, output
- - Implement state saving/restoring (just store the transcript?)
 Low priority:
  - Compress module data using gzip/lzma/bzip2?
    Benefits:

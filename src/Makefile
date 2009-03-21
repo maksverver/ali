@@ -7,7 +7,8 @@ LDFLAGS=-lm -fmudflap -lmudflap
 #LDFLAGS=-lm
 
 EXECUTABLES=ali alic alidump
-LIB_OBJECTS=debug.o elements.o interpreter.o strings.o ScapegoatTree.o Array.o
+LIB_OBJECTS=debug.o elements.o io.o interpreter.o strings.o \
+	ScapegoatTree.o Array.o
 ALI_OBJECTS=ali.o $(LIB_OBJECTS)
 ALIC_OBJECTS=alic.o syntax.yy.o grammar.tab.o $(LIB_OBJECTS)
 TESTS=test-ST test-strings

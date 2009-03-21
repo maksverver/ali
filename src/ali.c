@@ -1,4 +1,5 @@
 #include "debug.h"
+#include "io.h"
 #include "opcodes.h"
 #include "interpreter.h"
 #include "strings.h"
@@ -8,13 +9,15 @@
 #include <stdbool.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
 
 FILE *fp_transcript = NULL;
-FILE *fp_savedvars = NULL;
+FILE *fp_savedgame = NULL;
 
 int get_screen_width()
 {
@@ -126,18 +129,21 @@ void process_output(Interpreter *i)
         fputs("\n\n", stdout);
         fflush(stdout);
 
-        fputs(buf, fp_transcript);
-        fputs("\n\n", fp_transcript);
-        fflush(fp_transcript);
+        if (fp_transcript != NULL)
+        {
+            fputs(buf, fp_transcript);
+            fputs("\n\n", fp_transcript);
+            fflush(fp_transcript);
+        }
     }
 
     AR_clear(i->output);
 }
 
-void quit(Interpreter *I, int code)
+void ali_quit(Interpreter *I, int code)
 {
-    if (fp_savedvars != NULL)
-        fclose(fp_savedvars);
+    if (fp_savedgame != NULL)
+        fclose(fp_savedgame);
     if (fp_transcript != NULL)
         fclose(fp_transcript);
 
@@ -146,7 +152,7 @@ void quit(Interpreter *I, int code)
     exit(code);
 }
 
-void pause(Interpreter *I)
+void ali_pause(Interpreter *I)
 {
     process_output(I);
 
@@ -168,6 +174,31 @@ char *get_time_str()
         tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
         tm->tm_hour, tm->tm_min, tm->tm_sec);
     return buf;
+}
+
+void load_game(Interpreter *I)
+{
+    fseek(fp_savedgame, 0, SEEK_SET);
+    int n;
+    for (n = 0; n < I->vars->nval; ++n)
+        I->vars->vals[n] = read_int32(fp_savedgame);
+    if (ferror(fp_savedgame))
+        fatal("Could not load game data!");
+}
+
+void save_game(Interpreter *I)
+{
+    fseek(fp_savedgame, 0, SEEK_SET);
+    int n;
+    for (n = 0; n < I->vars->nval; ++n)
+    {
+        if (!write_int32(fp_savedgame, I->vars->vals[n]))
+        {
+            error("Could not save game data!");
+            return;
+        }
+    }
+    fflush(fp_savedgame);
 }
 
 void command_loop(Interpreter *I)
@@ -194,8 +225,96 @@ void command_loop(Interpreter *I)
         }
 
         normalize(line);
-        fprintf(fp_transcript, "%s> %s\n\n", get_time_str(), line);
+        if (fp_transcript != NULL)
+            fprintf(fp_transcript, "%s> %s\n\n", get_time_str(), line);
         process_command(I, line);
+        process_output(I);
+        save_game(I);
+    }
+}
+
+void select_game(Interpreter *I)
+{
+    char filename[128];
+    int n, c;
+    for (n = 1; ; n++)
+    {
+        struct stat st;
+        snprintf(filename, sizeof(filename), "savedgame-%d.bin", n);
+        if (stat(filename, &st) == 0 && S_ISREG(st.st_mode))
+        {
+            if (n == 1)
+                printf("Welcome back!\n\nWould you like to:\n");
+            struct tm *tm = localtime(&st.st_ctime);
+            printf("%3d) Resume saved game %d, "
+                   "last played on %04d/%02d/%02d %02d:%02d\n",
+                   n, n, tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                   tm->tm_hour, tm->tm_min);
+        }
+        else
+        {
+            if (n > 1)
+            {
+                printf("%3d) Start a new game\n", n);
+                printf("  0) Quit\n");
+            }
+            break;
+        }
+    }
+
+    if (n == 1)
+    {
+        /* Nothing to choose; start a new game. */
+        c = 1;
+    }
+    else
+    {
+        for (;;)
+        {
+            printf("\n> ");
+            fflush(stdout);
+            char line[1024];
+            if (fgets(line, sizeof(line), stdin) == NULL)
+                fatal("Failed to read input.");
+            if (sscanf(line, "%d", &c) != 1)
+            {
+                printf("\nResponse not understood.\n");
+                continue;
+            }
+            if (c < 0 || c > n)
+            {
+                printf("\nPlease select an option between 0 and %d.\n", n);
+                continue;
+            }
+            break;
+        }
+    }
+
+    if (c == 0)
+        exit(0);
+
+    /* Open saved game */
+    snprintf(filename, sizeof(filename), "savedgame-%d.bin", c);
+    fp_savedgame = fopen(filename, (c < n) ? "r+b" : "wb");
+    if (fp_savedgame == NULL)
+        fatal("Could not open %s!", filename);
+
+    /* Open transcript */
+    snprintf(filename, sizeof(filename), "transcript-%d.txt", c);
+    fp_transcript = fopen(filename, "at");
+    if (fp_transcript == NULL)
+        error("Could not open %s!", filename);
+
+    if (c < n)
+    {
+        printf("\nResuming game %d.\n\n", c);
+        load_game(I);
+    }
+    else
+    {
+        fputc('\n', stdout);
+        reinitialize(I);
+        save_game(I);
         process_output(I);
     }
 }
@@ -204,7 +323,7 @@ int main(int argc, char *argv[])
 {
     Array stack = AR_INIT(sizeof(Value));
     Array output = AR_INIT(sizeof(char));
-    Callbacks callbacks = { &quit, &pause };
+    Callbacks callbacks = { &ali_quit, &ali_pause };
     Interpreter interpreter;
 
     const char *path;
@@ -237,15 +356,11 @@ int main(int argc, char *argv[])
     interpreter.callbacks = &callbacks;
     interpreter.aux       = NULL;
 
-    /* Open transcript */
-    fp_transcript = fopen("transcript.log", "at");
-
-    /* Restart game */
-    reinitialize(&interpreter);
-    process_output(&interpreter);
+    /* Load game */
+    select_game(&interpreter);
     command_loop(&interpreter);
     warn("Unexpected end of input!");
-    quit(&interpreter, 1);
+    ali_quit(&interpreter, 1);
 
     return 0;
 }

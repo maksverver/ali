@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include "strings.h"
 #include "debug.h"
+#include "io.h"
 #include "interpreter.h"
 #include "opcodes.h"
 #include "Array.h"
@@ -599,30 +600,6 @@ void bind_sym_ent_ref(const char *str)
         fatal("Attempt to rebind symbol %s on line %d.\n", str, lineno + 1);
     }
     return;
-}
-
-static bool write_int8(FILE *fp, int i)
-{
-    unsigned char bytes[1] = { i&255 };
-    return fwrite(bytes, 1, 1, fp);
-}
-
-static bool write_int16(FILE *fp, int i)
-{
-    unsigned char bytes[2] = { (i>>8)&255, i&255 };
-    return fwrite(bytes, 2, 1, fp);
-}
-
-static bool write_int24(FILE *fp, int i)
-{
-    unsigned char bytes[3] = { (i>>16)&255, (i>>8)&255, i&255 };
-    return fwrite(bytes, 3, 1, fp);
-}
-
-static bool write_int32(FILE *fp, int i)
-{
-    unsigned char bytes[4] = { (i>>24)&255, (i>>16)&255, (i>>8)&255, i&255 };
-    return fwrite(bytes, 4, 1, fp);
 }
 
 static bool write_alio_header(FILE *fp)
