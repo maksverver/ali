@@ -12,9 +12,9 @@ library:
 General:
 - Check memory use with valgrind (interpreter only?)
   Must disable mudflap before doing this.
+- (maybe later:) richer fragment matching (e.g. "[THE] [BIG] (BOX/CHEST)")
 
 Documentation:
  - finish language documentation
 Later:
  - write tutorial?
-
