@@ -101,6 +101,7 @@ typedef struct Interpreter
 } Interpreter;
 
 /* Module loding */
+struct IOStream;
 Module *load_module(struct IOStream *ios);
 void free_module(Module *mod);
 

@@ -7,7 +7,7 @@ ali:
  - BUG: the interpreter will hang on (nearly) infinite loops
 
 library:
- - make linking with LZMA SDK code optional
+ - make linking with LZMA SDK code optional?
 
 General:
 - Check memory use with valgrind (interpreter only?)

@@ -1,3 +1,4 @@
+%expect 0
 %{
 
 #include <stdlib.h>
@@ -106,12 +107,15 @@ synonyms        : synonyms COMMA synonym
 synonym         : FRAGMENT { add_synonym(yytext); };
 
 block           : LCURBR statements RCURBR;
-statements      : statements statement
+
+statements      : write_output
+                | write_output statement statements
+                | statement statements
                 | ;
 statement       : ifst
                 | setst SEMICOLON
-                | proc_call SEMICOLON
-                | output { write_string(); };
+                | proc_call SEMICOLON;
+write_output    : output { write_string(); };
 
 ifst            : IF LPAREN expression RPAREN { emit(OP_JNP, -1); }
                   THEN block elseclause { patch_jmp(0); };

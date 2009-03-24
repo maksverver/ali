@@ -491,7 +491,6 @@ void end_guard()
         Command *cmd = AR_at(&ar_commands, n);
         if (cmd->function >= 0) break;  /* complete function found */
         cmd->guard = guard;
-        printf("guard=%d\n" ,guard);
     }
 }
 

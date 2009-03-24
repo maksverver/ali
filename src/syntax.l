@@ -4,8 +4,6 @@
 int lineno;
 %}
 
-%pointer
-
 %%
 
 [A-Z][A-Z0-9]*([ ]+[A-Z][A-Z0-9]*)* return FRAGMENT;
