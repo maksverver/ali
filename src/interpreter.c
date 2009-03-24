@@ -80,51 +80,47 @@ static void stack_dump(FILE *fp, Array *stack)
 }
 #endif
 
-static void skip(FILE *fp, int size)
+static bool skip(IOStream *ios, int size)
 {
     while (size-- > 0)
-        fgetc(fp);
+        if (!read_int8(ios, NULL))
+            return false;
+    return true;
 }
 
-static bool read_header(FILE *fp, Module *mod)
+static bool read_header(IOStream *ios, Module *mod)
 {
-    int size;
-    int version;
+    int size, version;
 
-    size = read_int32(fp);
-    if (size < 32)
+    if (!read_int32(ios, &size) || size < 32)
         return false;
 
-    version = read_int16(fp);
+    if (!read_int16(ios, &version))
+        return false;
     if ((version&0xff00) != 0x0100)
     {
         error("Invalid module file version: %d.%d (expected: 1.x)",
               (version>>8)&0xff, version&0xff);
         return false;
     }
-    read_int16(fp); /* skip reserved data */
-
-    mod->num_verbs        = read_int32(fp);
-    mod->num_prepositions = read_int32(fp);
-    mod->num_entities     = read_int32(fp);
-    mod->num_properties   = read_int32(fp);
-    mod->num_globals      = read_int32(fp);
-    mod->init_func        = read_int32(fp);
-
-    skip(fp, size - 32);
-
-    return true;
+    return 
+        read_int16(ios, NULL) && /* skip reserved data */
+        read_int32(ios, &mod->num_verbs) &&
+        read_int32(ios, &mod->num_prepositions) &&
+        read_int32(ios, &mod->num_entities) &&
+        read_int32(ios, &mod->num_properties) &&
+        read_int32(ios, &mod->num_globals) &&
+        read_int32(ios, &mod->init_func) &&
+        skip(ios, size - 32);
 }
 
-static bool read_fragment_table(FILE *fp, Module *mod)
+static bool read_fragment_table(IOStream *ios, Module *mod)
 {
     int size, entries, n;
 
-    size = read_int32(fp);
-    if (size < 8)
+    if (!read_int32(ios, &size) || size < 8)
         return false;
-    entries = read_int32(fp);
-    if ((size - 8)/8 < entries)
+    if (!read_int32(ios, &entries) || (size - 8)/8 < entries)
         return false;
 
     if (entries == 0)
@@ -143,17 +139,17 @@ static bool read_fragment_table(FILE *fp, Module *mod)
     {
         int type, flags, id, offset;
 
-        type  = read_int8(fp);
+        if (!read_int8(ios, &type) || !read_int24(ios, &id))
+            return false;
         flags = (type >> 4)&0xf0;
         type  = (type >> 0)&0x0f;
-        id    = read_int24(fp);
         if (id < 0 || id > (type == F_VERB ? mod->num_verbs :
                             type == F_PREPOSITION ? mod->num_prepositions :
                             type == F_ENTITY ? mod->num_entities : -1) )
             return false;
 
-        offset = read_int32(fp);
-        if (offset < 8 + 8*entries || offset >= size)
+        if (!read_int32(ios, &offset) ||
+            offset < 8 + 8*entries || offset >= size)
             return false;
         offset -= 8 + 8*entries;
 
@@ -166,7 +162,7 @@ static bool read_fragment_table(FILE *fp, Module *mod)
     size -= 8 + 8*entries;
     if (size <= 0)
         return false;
-    if (fread(mod->fragment_data, 1, size, fp) != size)
+    if (!read_data(ios, mod->fragment_data, size))
         return false;
     if (((char*)mod->fragment_data)[size - 1] != '\0')
         return false;
@@ -174,15 +170,13 @@ static bool read_fragment_table(FILE *fp, Module *mod)
     return true;
 }
 
-static bool read_string_table(FILE *fp, Module *mod)
+static bool read_string_table(IOStream *ios, Module *mod)
 {
     int size, entries, n;
 
-    size = read_int32(fp);
-    if (size < 8)
+    if (!read_int32(ios, &size) || size < 8)
         return false;
-    entries = read_int32(fp);
-    if ((size - 8)/4 < entries)
+    if (!read_int32(ios, &entries) || (size - 8)/4 < entries)
         return false;
 
     if (entries == 0)
@@ -199,8 +193,9 @@ static bool read_string_table(FILE *fp, Module *mod)
 
     for (n = 0; n < entries; ++n)
     {
-        int offset = read_int32(fp);
-        if (offset < 8 + 4*entries || offset >= size)
+        int offset;
+        if (!read_int32(ios, &offset) ||
+            offset < 8 + 4*entries || offset >= size)
             return false;
         mod->strings[n] = (char*)mod->string_data + offset - (8 + 4*entries);
     }
@@ -208,7 +203,7 @@ static bool read_string_table(FILE *fp, Module *mod)
     size -= 8 + 4*entries;
     if (size <= 0)
         return false;
-    if (fread(mod->string_data, 1, size, fp) != size)
+    if (!read_data(ios, mod->string_data, size))
         return false;
     if (((char*)mod->string_data)[size - 1] != '\0')
         return false;
@@ -216,16 +211,14 @@ static bool read_string_table(FILE *fp, Module *mod)
     return true;
 }
 
-static bool read_function_table(FILE *fp, Module *mod)
+static bool read_function_table(IOStream *ios, Module *mod)
 {
     int size, entries, ninstr, n;
     Instruction *instrs;
 
-    size = read_int32(fp);
-    if (size < 8 || size%4 != 0)
+    if (!read_int32(ios, &size) || size < 8 || size%4 != 0)
         return false;
-    entries = read_int32(fp);
-    if ((size - 8)/4 < entries)
+    if (!read_int32(ios, &entries) || (size - 8)/4 < entries)
         return false;
 
     if (entries == 0)
@@ -249,16 +242,16 @@ static bool read_function_table(FILE *fp, Module *mod)
     {
         int nret, nparam, offset;
 
-        read_int16(fp); /* Skip reserved bytes */
-        nret = read_int8(fp);
-        if (nret < 0)
-            return false;
-        nparam = read_int8(fp);
-        if (nparam < 0)
+        if (!read_int16(ios, NULL)) /* skip reserved bytes */
             return false;
 
-        offset = read_int32(fp);
-        if (offset < 8 + 8*entries || offset >= size || offset%4 != 0)
+        if (!read_int8(ios, &nret) || nret < 0)
+            return false;
+        if (!read_int8(ios, &nparam) || nparam < 0)
+            return false;
+
+        if (!read_int32(ios, &offset) ||
+            offset < 8 + 8*entries || offset >= size || offset%4 != 0)
             return false;
 
         mod->functions[n].id     = n;
@@ -271,8 +264,11 @@ static bool read_function_table(FILE *fp, Module *mod)
     /* Read instructions */
     for (n = 0; n < ninstr; ++n)
     {
-        instrs[n].opcode   = read_int8(fp);
-        instrs[n].argument = read_int24(fp);
+        int opcode, argument;
+        if (!read_int8(ios, &opcode) || !read_int24(ios, &argument))
+            return false;
+        instrs[n].opcode   = opcode;
+        instrs[n].argument = argument;
     }
 
     /* Determine out number of instructions in each function */
@@ -287,15 +283,13 @@ static bool read_function_table(FILE *fp, Module *mod)
     return true;
 }
 
-static bool read_command_table(FILE *fp, Module *mod)
+static bool read_command_table(IOStream *ios, Module *mod)
 {
     int size, entries, n;
 
-    size = read_int32(fp);
-    if (size < 8 || size%4 != 0)
+    if (!read_int32(ios, &size) || size < 8 || size%4 != 0)
         return false;
-    entries = read_int32(fp);
-    if ((size - 8)/4 < entries)
+    if (!read_int32(ios, &entries) || (size - 8)/4 < entries)
         return false;
 
     if (entries == 0)
@@ -318,8 +312,9 @@ static bool read_command_table(FILE *fp, Module *mod)
             return false;
         offset += 4;
 
-        int form = read_int16(fp);
-        int narg = read_int16(fp);
+        int form, narg;
+        if (!read_int16(ios, &form) || !read_int16(ios, &narg))
+            return false;
 
         if (offset + 4*narg + 8 > size)
             return false;
@@ -332,13 +327,22 @@ static bool read_command_table(FILE *fp, Module *mod)
             return false;
         }
 
-        mod->commands[n].form = form;
-        mod->commands[n].part[0] = (narg > 0) ? read_int32(fp) : -1;
-        mod->commands[n].part[1] = (narg > 1) ? read_int32(fp) : -1;
-        mod->commands[n].part[2] = (narg > 2) ? read_int32(fp) : -1;
-        mod->commands[n].part[3] = (narg > 3) ? read_int32(fp) : -1;
-        mod->commands[n].guard    = read_int32(fp);
-        mod->commands[n].function = read_int32(fp);
+        int part0 = -1, part1 = -1, part2 = -1, part3 = -1, guard, function;
+        if ((narg > 0 && !read_int32(ios, &part0)) ||
+            (narg > 1 && !read_int32(ios, &part1)) ||
+            (narg > 2 && !read_int32(ios, &part2)) ||
+            (narg > 3 && !read_int32(ios, &part3)) ||
+            !read_int32(ios, &guard) || !read_int32(ios, &function))
+        {
+            return false;
+        }
+        mod->commands[n].form    = form;
+        mod->commands[n].part[0] = part0;
+        mod->commands[n].part[1] = part1;
+        mod->commands[n].part[2] = part2;
+        mod->commands[n].part[3] = part3;
+        mod->commands[n].guard    = guard;
+        mod->commands[n].function = function;
     }
     return offset == size;
 }
@@ -362,14 +366,14 @@ void free_module(Module *mod)
     free(mod);
 }
 
-Module *load_module(FILE *fp)
+Module *load_module(IOStream *ios)
 {
     Module *mod = malloc(sizeof(Module));
-    int sig = read_int32(fp);
+    int sig;
 
     memset(mod, 0, sizeof(Module));
 
-    if (ferror(fp))
+    if (!read_int32(ios, &sig))
     {
         error("Unable to read from module file.");
         goto failed;
@@ -381,31 +385,31 @@ Module *load_module(FILE *fp)
         goto failed;
     }
 
-    if (!read_header(fp, mod) || ferror(fp))
+    if (!read_header(ios, mod))
     {
         error("Failed to load module header.");
         goto failed;
     }
 
-    if (!read_fragment_table(fp, mod) || ferror(fp))
+    if (!read_fragment_table(ios, mod))
     {
         error("Failed to read module fragment table.");
         goto failed;
     }
 
-    if (!read_string_table(fp, mod) || ferror(fp))
+    if (!read_string_table(ios, mod))
     {
         error("Failed to read module string table.");
         goto failed;
     }
 
-    if (!read_function_table(fp, mod) || ferror(fp))
+    if (!read_function_table(ios, mod))
     {
         error("Failed to read module function table.");
         goto failed;
     }
 
-    if (!read_command_table(fp, mod) || ferror(fp))
+    if (!read_command_table(ios, mod))
     {
         error("Failed to read module command table.");
         goto failed;

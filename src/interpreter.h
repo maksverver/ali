@@ -101,7 +101,7 @@ typedef struct Interpreter
 } Interpreter;
 
 /* Module loding */
-Module *load_module(FILE *fp);
+Module *load_module(struct IOStream *ios);
 void free_module(Module *mod);
 
 /* Variables allocation (variables are cleared on allocation) */

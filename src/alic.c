@@ -491,6 +491,7 @@ void end_guard()
         Command *cmd = AR_at(&ar_commands, n);
         if (cmd->function >= 0) break;  /* complete function found */
         cmd->guard = guard;
+        printf("guard=%d\n" ,guard);
     }
 }
 
@@ -602,7 +603,7 @@ void bind_sym_ent_ref(const char *str)
     return;
 }
 
-static bool write_alio_header(FILE *fp)
+static bool write_alio_header(IOStream *ios)
 {
     int init_func = -1;
     const void *init_idx;
@@ -610,15 +611,15 @@ static bool write_alio_header(FILE *fp)
         init_func = (long)init_idx;
 
     return
-        write_int32(fp, 32) &&      /* header size: 32 bytes */
-        write_int16(fp, 0x0100) &&  /* file version: 1.0 */
-        write_int16(fp, 0) &&       /* reserved */
-        write_int32(fp, num_verbs) &&
-        write_int32(fp, num_prepositions) &&
-        write_int32(fp, num_entities) &&
-        write_int32(fp, AR_size(&ar_properties)) &&
-        write_int32(fp, AR_size(&ar_vars)) &&
-        write_int32(fp, init_func);
+        write_int32(ios, 32) &&      /* header size: 32 bytes */
+        write_int16(ios, 0x0100) &&  /* file version: 1.0 */
+        write_int16(ios, 0) &&       /* reserved */
+        write_int32(ios, num_verbs) &&
+        write_int32(ios, num_prepositions) &&
+        write_int32(ios, num_entities) &&
+        write_int32(ios, AR_size(&ar_properties)) &&
+        write_int32(ios, AR_size(&ar_vars)) &&
+        write_int32(ios, init_func);
 }
 
 static int cmp_fragments(const void *a, const void *b)
@@ -630,7 +631,7 @@ static int cmp_fragments(const void *a, const void *b)
     return d;
 }
 
-static bool write_alio_fragments(FILE *fp)
+static bool write_alio_fragments(IOStream *ios)
 {
     int table_size, offset;
     Fragment *fragments;
@@ -650,7 +651,7 @@ static bool write_alio_fragments(FILE *fp)
     while ((table_size + padding)%4 != 0)
         ++padding;
 
-    if (!(write_int32(fp, table_size + padding) && write_int32(fp, nfragment)))
+    if (!write_int32(ios, table_size + padding) || !write_int32(ios, nfragment))
         return false;
 
     /* Write fragment headers */
@@ -659,27 +660,27 @@ static bool write_alio_fragments(FILE *fp)
     {
         int flags_type = fragments[n].type;
         if (fragments[n].canon) flags_type |= 0x10;
-        if (!(write_int8(fp, flags_type) &&
-              write_int24(fp, fragments[n].id) &&
-              write_int32(fp, offset)))
+        if (!write_int8(ios, flags_type) ||
+            !write_int24(ios, fragments[n].id) ||
+            !write_int32(ios, offset))
             return false;
         offset += strlen(fragments[n].str) + 1;
     }
 
     /* Write fragment strings */
     for (n = 0; n < nfragment; ++n)
-        if (!fwrite(fragments[n].str, strlen(fragments[n].str) + 1, 1, fp))
+        if (!write_data(ios, fragments[n].str, strlen(fragments[n].str) + 1))
             return false;
 
     /* Write padding */
     for (n = 0; n < padding; ++n)
-        if (!write_int8(fp, 0))
+        if (!write_int8(ios, 0))
             return false;
 
     return true;
 }
 
-static bool write_alio_strings(FILE *fp)
+static bool write_alio_strings(IOStream *ios)
 {
     int table_size, offset;
     char **strings;
@@ -696,32 +697,32 @@ static bool write_alio_strings(FILE *fp)
     while ((table_size + padding)%4 != 0)
         ++padding;
 
-    if (!(write_int32(fp, table_size + padding) && write_int32(fp, nstring)))
+    if (!write_int32(ios, table_size + padding) || !write_int32(ios, nstring))
         return false;
 
     /* Write offsets */
     offset = 8 + 4*nstring;
     for (n = 0; n < nstring; ++n)
     {
-        if (!write_int32(fp, offset))
+        if (!write_int32(ios, offset))
             return false;
         offset += strlen(strings[n]) + 1;
     }
 
     /* Write strings */
     for (n = 0; n < nstring; ++n)
-        if (!fwrite(strings[n], strlen(strings[n]) + 1, 1, fp))
+        if (!write_data(ios, strings[n], strlen(strings[n]) + 1))
             return false;
 
     /* Write padding */
     for (n = 0; n < padding; ++n)
-        if (!write_int8(fp, 0))
+        if (!write_int8(ios, 0))
             return false;
 
     return true;
 }
 
-static bool write_alio_functions(FILE *fp)
+static bool write_alio_functions(IOStream *ios)
 {
     int table_size, offset;
     Function *functions;
@@ -735,20 +736,17 @@ static bool write_alio_functions(FILE *fp)
     for (n = 0; n < nfunction; ++n)
         table_size += 4*(functions[n].ninstr + 1);
 
-    if (!(write_int32(fp, table_size) && write_int32(fp, nfunction)))
+    if (!write_int32(ios, table_size) || !write_int32(ios, nfunction))
         return false;
 
     /* Write function headers */
     offset = 8 + 8*nfunction;
     for (n = 0; n < nfunction; ++n)
     {
-        if (!(write_int16(fp, 0)))
-            return false;
-        if (!write_int8(fp, functions[n].nret))
-            return false;
-        if (!write_int8(fp, functions[n].nparam))
-            return false;
-        if (!write_int32(fp, offset))
+        if (!write_int16(ios, 0) ||
+            !write_int8(ios, functions[n].nret) ||
+            !write_int8(ios, functions[n].nparam) ||
+            !write_int32(ios, offset))
             return false;
         offset += 4*(functions[n].ninstr + 1);
     }
@@ -761,10 +759,11 @@ static bool write_alio_functions(FILE *fp)
         {
             assert(ins[i].opcode == (ins[i].opcode&255));
             assert(ins[i].argument >= -0x00800000 && ins[i].argument <= 0x007fffff);
-            if (!(write_int8(fp, ins[i].opcode) && write_int24(fp,ins[i].argument)))
+            if (!write_int8(ios, ins[i].opcode) ||
+                !write_int24(ios, ins[i].argument))
                 return false;
         }
-        if (!write_int32(fp, 0))
+        if (!write_int32(ios, 0))
             return false;
     }
 
@@ -782,7 +781,7 @@ static int cmp_commands(const void *a, const void *b)
     return 0;
 }
 
-static bool write_alio_commands(FILE *fp)
+static bool write_alio_commands(IOStream *ios)
 {
     int ncommand, total_args, n, m;
     int form_to_nargs[3] = { 1, 2, 4 };
@@ -798,47 +797,47 @@ static bool write_alio_commands(FILE *fp)
     total_args = 0;
     for (n = 0; n < ncommand; ++n)
         total_args += form_to_nargs[commands[n].form];
-    if (!write_int32(fp, 8 + 12*ncommand + 4*total_args))
+    if (!write_int32(ios, 8 + 12*ncommand + 4*total_args))
         return false;
 
     /* Write all commands */
-    if (!write_int32(fp, ncommand))
+    if (!write_int32(ios, ncommand))
         return false;
     for (n = 0; n < ncommand; ++n)
     {
-        if (!write_int16(fp, commands[n].form)) return false;
-        if (!write_int16(fp, form_to_nargs[commands[n].form])) return false;
+        if (!write_int16(ios, commands[n].form)) return false;
+        if (!write_int16(ios, form_to_nargs[commands[n].form])) return false;
         for (m = 0; m < form_to_nargs[commands[n].form]; ++m)
         {
-            if (!write_int32(fp, commands[n].part[m])) return false;
+            if (!write_int32(ios, commands[n].part[m])) return false;
         }
-        if (!write_int32(fp, commands[n].guard)) return false;
-        if (!write_int32(fp, commands[n].function)) return false;
+        if (!write_int32(ios, commands[n].guard)) return false;
+        if (!write_int32(ios, commands[n].function)) return false;
     }
 
     return true;
 }
 
-static bool write_alio(FILE *fp)
+static bool write_alio(IOStream *ios)
 {
-    if (fwrite("alio", 4, 1, fp) != 1)
+    if (!write_data(ios, "alio", 4))
         return false;
 
-    return write_alio_header(fp) &&
-           write_alio_fragments(fp) &&
-           write_alio_strings(fp) &&
-           write_alio_functions(fp) &&
-           write_alio_commands(fp);
+    return write_alio_header(ios) &&
+           write_alio_fragments(ios) &&
+           write_alio_strings(ios) &&
+           write_alio_functions(ios) &&
+           write_alio_commands(ios);
 }
 
 void create_object_file()
 {
-    FILE *fp = fopen(output_path, "wb");
-    if (!fp)
+    IOStream ios;
+    if (!ios_open(&ios, output_path, IOM_WRONLY, IOC_COPY))
         fatal("Unable to open output file \"%s\".", output_path);
-    if (!write_alio(fp))
+    if (!write_alio(&ios))
         fatal("Unable to write output file \"%s\".", output_path);
-    fclose(fp);
+    ios_close(&ios);
 }
 
 void parser_create()

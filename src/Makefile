@@ -8,7 +8,7 @@ LDFLAGS=-lm -fmudflap -lmudflap
 
 EXECUTABLES=ali alic alidump
 LIB_OBJECTS=debug.o elements.o io.o interpreter.o strings.o \
-	ScapegoatTree.o Array.o
+	ScapegoatTree.o Array.o lzma/LzmaDec.o
 ALI_OBJECTS=ali.o $(LIB_OBJECTS)
 ALIC_OBJECTS=alic.o syntax.yy.o grammar.tab.o $(LIB_OBJECTS)
 TESTS=test-ST test-strings
@@ -44,9 +44,8 @@ alidump: alidump.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
 clean:
-	rm -f *.o
+	rm -f *.o lzma/*.o
 	rm -f grammar.tab.c grammar.tab.h syntax.yy.c
 
 distclean: clean
 	rm -f $(EXECUTABLES) $(TESTS)
-

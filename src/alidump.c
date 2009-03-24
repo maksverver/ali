@@ -342,7 +342,7 @@ static void dump_command_table(const char *data, size_t size)
         if (guard == -1)
             printf("       -");
         else
-            printf("  %6d", obj2);
+            printf("  %6d", guard);
         printf("  %6d\n", func);
 
 

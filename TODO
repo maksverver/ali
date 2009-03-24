@@ -1,25 +1,20 @@
-- Check memory use with valgrind (interpreter only?)
-  Must disable mudflap before doing this.
+Most Important Item: write an actual game!
 
-alic: (all of these can wait till later:)
- - Support for forward declarations of functions/procedures?
+alic:
+ - (maybe later:) support for forward declarations of functions/procedures?
 
 ali:
-Low priority:
- - Compress module data using gzip/lzma/bzip2?
-   Benefits:
-     - smaller games (obviously); interpreter is already very small.
-     - game is obfuscated a bit to deter cheating
-   What format to use?
-     - candidates: gzip (zlib), bzip2, maybe lzma (there is a pure C library
-       for decompression only)
-   This would be nice to obfuscate the code a little too.
-   Makes sense only after writing a larger module and determining which formats
-   give good compression. Take memory use into account, and additional code
-   size incurred by including the decompression library.
  - BUG: the interpreter will hang on (nearly) infinite loops
+
+library:
+ - make linking with LZMA SDK code optional
+
+General:
+- Check memory use with valgrind (interpreter only?)
+  Must disable mudflap before doing this.
 
 Documentation:
  - finish language documentation
 Later:
  - write tutorial?
+

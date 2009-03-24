@@ -179,24 +179,20 @@ char *get_time_str()
 void load_game(Interpreter *I)
 {
     fseek(fp_savedgame, 0, SEEK_SET);
-    int n;
-    for (n = 0; n < I->vars->nval; ++n)
-        I->vars->vals[n] = read_int32(fp_savedgame);
-    if (ferror(fp_savedgame))
+    if (fread(I->vars, sizeof(Value), I->vars->nval, fp_savedgame)
+        != I->vars->nval)
+    {
         fatal("Could not load game data!");
+    }
 }
 
 void save_game(Interpreter *I)
 {
     fseek(fp_savedgame, 0, SEEK_SET);
-    int n;
-    for (n = 0; n < I->vars->nval; ++n)
+    if (fwrite(I->vars, sizeof(Value), I->vars->nval, fp_savedgame)
+        != I->vars->nval)
     {
-        if (!write_int32(fp_savedgame, I->vars->vals[n]))
-        {
-            error("Could not save game data!");
-            return;
-        }
+        fatal("Could not save game data!");
     }
     fflush(fp_savedgame);
 }
@@ -327,7 +323,7 @@ int main(int argc, char *argv[])
     Interpreter interpreter;
 
     const char *path;
-    FILE *fp;
+    IOStream ios;
 
     if (argc > 2 || (argc > 1 && argv[1][0] == '-'))
     {
@@ -339,11 +335,10 @@ int main(int argc, char *argv[])
 
     /* Attempt to load executable module */
     path = (argc == 2 ? argv[1] :"module.alo");
-    fp = fopen(path, "rb");
-    if (!fp)
+    if(!ios_open(&ios, path, IOM_RDONLY, IOC_AUTO))
         fatal("Unable to open file \"%s\" for reading.", path);
-    interpreter.mod = load_module(fp);
-    fclose(fp);
+    interpreter.mod = load_module(&ios);
+    ios_close(&ios);
     if (interpreter.mod == NULL)
         fatal("Invalid module file: \"%s\".", path);
 
