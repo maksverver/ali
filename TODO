@@ -2,6 +2,7 @@ Most Important Item: write an actual game!
 
 alic:
  - (maybe later:) support for forward declarations of functions/procedures?
+ - remove duplicates from fragment lists generated from fragment patterns.
 
 ali:
  - BUG: the interpreter will hang on (nearly) infinite loops

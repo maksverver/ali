@@ -39,6 +39,7 @@ nil                             return NIL;
 \.                              return PERIOD;
 \,                              return COMMA;
 \;                              return SEMICOLON;
+\/                              return SLASH;
 
 \"(\\\"|[^\"\n])*\"             return STRING;
 0|[1-9][0-9]*|-[1-9][0-9]*      return INTEGER;

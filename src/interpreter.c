@@ -21,12 +21,11 @@ static Value builtin_pause   (Interpreter *I, int narg, Value *args);
 static Value builtin_quit    (Interpreter *I, int narg, Value *args);
 static Value builtin_reset   (Interpreter *I, int narg, Value *args);
 
-#define NBUILTIN 6
-Builtin builtins[NBUILTIN] = {
+Builtin builtins[NUM_BUILTINS] = {
     builtin_write, builtin_writeln, builtin_writef,
     builtin_pause, builtin_quit, builtin_reset };
 
-const char * const builtin_names[] = {
+const char * const builtin_names[NUM_BUILTINS + 1] = {
     "write", "writeln", "writef", "pause", "quit", "reset", NULL };
 
 
@@ -696,7 +695,7 @@ static void invoke(Interpreter *I, int nargs, int nret)
     if (func_id < 0)
     {
         func_id = -func_id - 1;
-        if (func_id > NBUILTIN)
+        if (func_id > NUM_BUILTINS)
             fatal("Invalid system call (%d).", func_id);
         result = builtins[func_id](I, nargs,
             (Value*)AR_data(I->stack) + AR_size(I->stack) - nargs);

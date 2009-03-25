@@ -33,11 +33,15 @@ int resolve_property(const char *str);
 void begin_verb(void);
 void begin_preposition(void);
 void begin_entity(void);
-void add_synonym(const char *str);
 void begin_call(const char *name, int nret);
 void end_call(int nret);
 void count_arg(void);
 void bind_sym_ent_ref(const char *token);
+void pattern_push(const char *str);
+void pattern_alt(void);
+void pattern_seq(void);
+void pattern_opt(void);
+void add_synonyms(void);
 
 %}
 
@@ -46,7 +50,7 @@ void bind_sym_ent_ref(const char *token);
 %token VERB ENTITY PREPOSITION FUNCTION PROCEDURE COMMAND
 %token EQUAL INEQUAL AND OR NOT TRUE FALSE NIL
 %token LPAREN RPAREN LCURBR RCURBR LSQRBR RSQRBR
-%token PERIOD COMMA SEMICOLON
+%token PERIOD COMMA SEMICOLON SLASH
 %token STRING INTEGER OUTPUT
 %token IDENTIFIER ATTRIBUTE SYMBOL GLOBALVAR LOCALVAR
 %token ERROR
@@ -104,7 +108,21 @@ parameter       : LOCALVAR { add_parameter(yytext); };
 
 synonyms        : synonyms COMMA synonym
                 | synonym;
-synonym         : FRAGMENT { add_synonym(yytext); };
+
+synonym         : pattern { add_synonyms(); };
+
+pattern         : alternatives;
+
+alternatives    : alternatives SLASH sequence { pattern_alt(); }
+                | sequence;
+
+sequence        : sequence basepattern { pattern_seq(); }
+                | basepattern;
+
+basepattern     : FRAGMENT { pattern_push(yytext); }
+                | LSQRBR pattern RSQRBR { pattern_opt(); }
+                | LPAREN pattern RPAREN;
+
 
 block           : LCURBR statements RCURBR;
 

@@ -4,10 +4,10 @@ extern char *yytext;
 int yylex();
 void yyerror(const char *str);
 
-void push_fragment(const char *str);
-void make_alternatives();
-void make_sequence();
-void make_optional();
+void pattern_push(const char *str);
+void pattern_alt();
+void pattern_seq();
+void pattern_opt();
 
 %}
 
