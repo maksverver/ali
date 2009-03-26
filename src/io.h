@@ -2,7 +2,11 @@
 #define IO_H_INCLUDED
 
 #include <stdbool.h>
+#include <stdlib.h>
+
+#ifdef WITH_LZMA
 #include "lzma/LzmaDec.h"
+#endif
 
 typedef enum IOCompression {
     IOC_AUTO,       /* auto-detect a suitable (de)compression format */
@@ -27,8 +31,10 @@ typedef struct IOStream
     unsigned char   buf_in[512];        /* input buffer data */
     unsigned char   buf_out[512];       /* output buffer data */
 
+#ifdef WITH_LZMA
     ELzmaStatus     lzma_status;        /* LZMA (de/en)coder status */
     CLzmaDec        lzma_dec;           /* LZMA decoder */
+#endif
 } IOStream;
 
 

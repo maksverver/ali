@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 
+#ifdef WITH_LZMA
 static void *lzma_alloc(void *p, size_t size)
 {
     void *res;
@@ -22,9 +23,13 @@ static void lzma_free(void *p, void *addr)
 }
 
 static ISzAlloc szalloc = { lzma_alloc, lzma_free };
+#endif
 
 static bool autodetect_lzma(IOStream *ios)
 {
+#ifndef WITH_LZMA
+    return false;
+#else
     /* Ensure we could read the LZMA stream header */
     if (ios->len_in < LZMA_PROPS_SIZE + 8)
         return false;
@@ -46,6 +51,7 @@ static bool autodetect_lzma(IOStream *ios)
     ios->ioc    = IOC_LZMA;
     ios->pos_in = LZMA_PROPS_SIZE + 8;
     return true;
+#endif
 }
 
 bool ios_open(IOStream *ios, const char *path, IOMode iom, IOCompression ioc)
@@ -102,8 +108,10 @@ bool ios_eof(IOStream *ios)
 
 void ios_close(IOStream *ios)
 {
+#ifdef WITH_LZMA
     if (ios->iom == IOM_RDONLY && ios->ioc == IOC_LZMA)
         LzmaDec_Free(&ios->lzma_dec, &szalloc);
+#endif
     fclose(ios->fp);
     ios->fp = NULL;
 }
@@ -123,6 +131,7 @@ static bool refill_input(IOStream *ios)
         return true;
     }
     else
+#ifdef WITH_LZMA
     if (ios->ioc == IOC_LZMA)
     {
         ios->pos_out = ios->len_out = 0;
@@ -155,6 +164,7 @@ static bool refill_input(IOStream *ios)
         return ios->len_out > 0;
     }
     else
+#endif
     {
         return false;
     }

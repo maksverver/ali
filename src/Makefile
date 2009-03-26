@@ -1,14 +1,14 @@
-# Debug flags:
+# Debug flags
 CFLAGS=-Wall -g -Os -fmudflap
 LDFLAGS=-lm -fmudflap -lmudflap
 
 # Release flags:
-#CFLAGS=-Os
+#CFLAGS=-Os -DWITH_LZMA
 #LDFLAGS=-lm
 
 EXECUTABLES=ali alic alidump
 LIB_OBJECTS=debug.o elements.o io.o interpreter.o strings.o \
-	ScapegoatTree.o Array.o lzma/LzmaDec.o
+	ScapegoatTree.o Array.o lzma/lzma.a
 ALI_OBJECTS=ali.o $(LIB_OBJECTS)
 ALIC_OBJECTS=alic.o syntax.yy.o grammar.tab.o $(LIB_OBJECTS)
 TESTS=test-ST test-strings
@@ -43,8 +43,11 @@ alic: $(ALIC_OBJECTS)
 alidump: alidump.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
+lzma/lzma.a:
+	make -C lzma
+
 clean:
-	rm -f *.o lzma/*.o
+	rm -f *.o
 	rm -f grammar.tab.c grammar.tab.h syntax.yy.c
 
 distclean: clean
