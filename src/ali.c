@@ -179,8 +179,8 @@ char *get_time_str()
 void load_game(Interpreter *I)
 {
     fseek(fp_savedgame, 0, SEEK_SET);
-    if (fread(I->vars, sizeof(Value), I->vars->nval, fp_savedgame)
-        != I->vars->nval)
+    if (fread(I->vars->vals, sizeof(Value), I->vars->nval, fp_savedgame)
+        != (size_t)I->vars->nval)
     {
         fatal("Could not load game data!");
     }
@@ -189,8 +189,8 @@ void load_game(Interpreter *I)
 void save_game(Interpreter *I)
 {
     fseek(fp_savedgame, 0, SEEK_SET);
-    if (fwrite(I->vars, sizeof(Value), I->vars->nval, fp_savedgame)
-        != I->vars->nval)
+    if (fwrite(I->vars->vals, sizeof(Value), I->vars->nval, fp_savedgame)
+        != (size_t)I->vars->nval)
     {
         fatal("Could not save game data!");
     }

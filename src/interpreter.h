@@ -42,6 +42,7 @@ typedef struct Fragment
 typedef int Value;
 extern const Value val_true, val_false, val_nil;
 #define VAL_TO_BOOL(v)  ((v) > 0 ? true : false)
+#define BOOL_TO_VAL(b)  ((b) ? val_true: val_false)
 
 /* List of built-in functions (terminated by NULL) */
 #define NUM_BUILTINS (6)

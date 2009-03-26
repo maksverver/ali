@@ -110,7 +110,7 @@ static struct Node *build_tree(size_t n, struct Node *x)
 
 static void rebuild(struct Node **node)
 {
-    struct Node *list, *p, w = { NULL, NULL };
+    struct Node *list, *p, w = { NULL, NULL, NULL, NULL };
     size_t n = 0;
 
     list = flatten(*node, &w);
@@ -138,7 +138,7 @@ static size_t rebuild_scapegoat(struct Node **node, EA_cmp key_cmp, const void *
 
     /* Determine sizes of subtrees */
     n = rebuild_scapegoat(l, key_cmp, key);
-    if (n == (size_t)-1)
+    if (n == -1)
         return n;
     m = subtree_size(r);
 
@@ -274,7 +274,7 @@ bool ST_find_or_insert_entry(ScapegoatTree *tree, const void **key, const void *
 
 /* Erases an item in the tree. Returns true if the item was present, or
    false otherwise. */
-bool ST_erase(ScapegoatTree *tree, const void *key, size_t key_size)
+bool ST_erase(ScapegoatTree *tree, const void *key)
 {
     struct Node **node = find(tree->key_cmp, &tree->root, key, NULL);
     struct Node *old, **pred;

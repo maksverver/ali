@@ -7,4 +7,5 @@ void *EA_no_dup(const void *arg)
 
 void EA_no_free(void *arg /* unused */)
 {
+    (void)arg;
 }

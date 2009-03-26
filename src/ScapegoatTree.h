@@ -55,7 +55,7 @@ bool ST_find_or_insert_entry(ScapegoatTree *tree, const void **key, const void *
 
 /* Erases an item in the tree. Returns TRUE if the item was present, or
    FALSE otherwise. */
-bool ST_erase(ScapegoatTree *tree, const void *key, size_t key_size);
+bool ST_erase(ScapegoatTree *tree, const void *key);
 
 /* Iterate over the contents of the tree.
    The callback is called for every value. If it returns non-zero, iteration

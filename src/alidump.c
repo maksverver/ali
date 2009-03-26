@@ -76,7 +76,7 @@ static void dump_fragment_table(const char *data, size_t size)
     entries = get_int32(data + 4);
     printf("Number of entries: %d\n", entries);
 
-    if (entries < 0 || entries > (size - 8)/8)
+    if (entries < 0 || entries > (int)((size - 8)/8))
     {
         printf("Invalid number of entries!\n");
         return;
@@ -90,14 +90,14 @@ static void dump_fragment_table(const char *data, size_t size)
         int offset = get_int32(data + 8 + 8*n + 4);
 
         printf("\t%6d: ", n);
-        if (offset < 8 + 8*entries || offset > size)
+        if (offset < 8 + 8*entries || offset > (int)size)
             printf("<invalid offset: %d>", offset);
         else
         {
             int length = 0;
-            while (offset + length < size && data[offset + length] != '\0')
+            while (offset + length < (int)size && data[offset + length] != '\0')
                 ++length;
-            if (offset + length == size)
+            if (offset + length == (int)size)
                 printf("<missing terminating nul-character>");
             else
                 printf("\"%s\" (offset: %d; length: %d)", data + offset, offset, length);
@@ -135,7 +135,7 @@ static void dump_string_table(const char *data, size_t size)
     entries = get_int32(data + 4);
     printf("Number of entries: %d\n", entries);
 
-    if (entries < 0 || entries > (size - 8)/4)
+    if (entries < 0 || entries > (int)((size - 8)/4))
     {
         printf("Invalid number of entries!\n");
         return;
@@ -146,14 +146,14 @@ static void dump_string_table(const char *data, size_t size)
         int offset = get_int32(data + 8 + 4*n);
 
         printf("\t%6d: ", n);
-        if (offset < 8 + 4*entries || offset > size)
+        if (offset < 8 + 4*entries || offset > (int)size)
             printf("<invalid offset: %d>\n", offset);
         else
         {
             int length = 0;
-            while (offset + length < size && data[offset + length] != '\0')
+            while (offset + length < (int)size && data[offset + length] != '\0')
                 ++length;
-            if (offset + length == size)
+            if (offset + length == (int)size)
                 printf("<missing terminating nul-character>\n");
             else
                 printf("\"%s\" (offset: %d; length: %d) \n", data + offset, offset, length);
@@ -176,7 +176,7 @@ static void dump_function_table(const char *data, size_t size, int instrs)
     printf("Number of entries: %d\n\n", entries);
     data += 8, size -= 8;
 
-    if (entries < 0 || entries > (size - 8)/8)
+    if (entries < 0 || entries > (int)((size - 8)/8))
     {
         printf("Invalid number of entries!\n");
         return;
@@ -190,13 +190,13 @@ static void dump_function_table(const char *data, size_t size, int instrs)
         int nret   = *(data + 8*n + 2);
         int offset = get_int32(data + 8*n + 4);
         int next_offset = (n + 1 < entries) ? get_int32(data + 8*(n + 1) + 4)
-                                            : size + 8;
+                                            : (int)size + 8;
 
         printf("%8d: %8d  %8d  %8d  %8d  %8d \n",
                n, narg, nret, offset, next_offset - offset,
                (offset - (8 + 8*entries))/4);
 
-        if (offset%4 != 0 || offset < 8 + 8*entries || offset > size)
+        if (offset%4 != 0 || offset < 8 + 8*entries || offset > (int)size)
             printf("Code offset is invalid!\n");
     }
     printf("--------- --------- --------- --------- --------- -----------\n");
@@ -206,7 +206,7 @@ static void dump_function_table(const char *data, size_t size, int instrs)
     if (instrs)
     {
         printf("\nInstructions:\n");
-        for (n = 0; n < size/4; ++n)
+        for (n = 0; n < (int)(size/4); ++n)
         {
             int opcode, argument;
             opcode   = data[4*n];
@@ -278,7 +278,7 @@ static void dump_command_table(const char *data, size_t size)
         }
         form = get_int16(data);
         args = get_int16(data + 2);
-        if (size < 4 + 4*args + 8)
+        if ((int)size < 4 + 4*args + 8)
         {
             printf("Command table entry truncated!\n");
             return;

@@ -113,7 +113,7 @@ void patch_jmp(int offset)
 {
     size_t pos = AR_size(&func_body);
     Instruction *code = (Instruction*)AR_data(&func_body) + pos;
-    assert(offset <= 0 && pos >= -offset);
+    assert(offset <= 0 && pos >= (size_t)-offset);
     pos += offset, code += offset;
     while (pos)
     {
@@ -140,12 +140,12 @@ int resolve_local(const char *id)
 {
     int n;
 
-    for (n = 0; n < AR_size(&func_params); ++n)
+    for (n = 0; n < (int)AR_size(&func_params); ++n)
     {
         if (strcmp(id, *(char**)AR_at(&func_params, n)) == 0)
             break;
     }
-    if (n == AR_size(&func_params))
+    if (n == (int)AR_size(&func_params))
     {
         char *str = strdup(id);
         AR_append(&func_params, &str);
@@ -262,7 +262,7 @@ void parse_string(const char *token)
     assert(str_buf != NULL);
 
     /* Add token to string buffer, unescaping in the process. */
-    int pos = 0;
+    size_t pos = 0;
     while (pos < token_len)
     {
         if (token[pos] == '\\')
@@ -348,7 +348,7 @@ void end_function()
     /* Free allocated resources */
     free(func_name);
     func_name = NULL;
-    for (n = 0; n < AR_size(&func_params); ++n)
+    for (n = 0; n < (int)AR_size(&func_params); ++n)
         free(*(char**)AR_at(&func_params, n));
     AR_clear(&func_params);
     func_nlocal = 0;
@@ -583,7 +583,7 @@ int resolve_fragment(const char *token, int type)
     }
     free(str);
     f = AR_at(&ar_fragments, (long)f_idx);
-    if (type != -1 && type != f->type)
+    if (type != -1 && type != (int)f->type)
     {
         fatal("Fragment referenced by \"%s\" has wrong type on line %d.",
             str, lineno + 1);

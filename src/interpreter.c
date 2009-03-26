@@ -494,8 +494,9 @@ static Value exec_function(Interpreter *I, const Function *f, int stack_base)
     /* Interpreter loop */
     while (i >= f->instrs && i < f->instrs + f->ninstr)
     {
-        int opcode   = i->opcode;
-        int argument = i->argument;
+        int opcode      = i->opcode;
+        int argument    = i->argument;
+        int frame_size  = (int)AR_size(I->stack) - stack_base;
         /* info("Instruction %d", i - (Instruction*)I->mod->function_data); */
         ++i;
 
@@ -506,19 +507,19 @@ static Value exec_function(Interpreter *I, const Function *f, int stack_base)
             break;
 
         case OP_POP:
-            if (argument < 0 || stack_base + argument > AR_size(I->stack))
+            if (argument < 0 || argument > frame_size)
                 goto invalid;
             AR_resize(I->stack, AR_size(I->stack) - argument);
             break;
 
         case OP_LDL:
-            if (argument < 0 || stack_base + argument >= AR_size(I->stack))
+            if (argument < 0 || argument >= frame_size)
                 goto invalid;
             push_stack(I->stack, *(Value*)AR_at(I->stack, stack_base + argument));
             break;
 
         case OP_STL:
-            if (argument < 0 || stack_base + argument >= AR_size(I->stack) - 1)
+            if (argument < 0 || argument >= frame_size - 1)
                 goto invalid;
             AR_pop(I->stack, &val);
             *(Value*)AR_at(I->stack, stack_base + argument) = val;
@@ -539,7 +540,7 @@ static Value exec_function(Interpreter *I, const Function *f, int stack_base)
         case OP_LDI:
             {
                 int index;
-                if (AR_size(I->stack) - stack_base < 1)
+                if (frame_size < 1)
                     goto invalid;
                 AR_pop(I->stack, &val);
                 index = I->mod->num_globals
@@ -554,7 +555,7 @@ static Value exec_function(Interpreter *I, const Function *f, int stack_base)
             {
                 int index;
                 Value *v;
-                if (AR_size(I->stack) - stack_base < 2)
+                if (frame_size < 2)
                     goto invalid;
                 v = (Value*)AR_at(I->stack, AR_size(I->stack) - 2);
                 index = I->mod->num_globals
@@ -567,7 +568,7 @@ static Value exec_function(Interpreter *I, const Function *f, int stack_base)
             } break;
 
         case OP_JNP:
-            if (AR_size(I->stack) - stack_base < 1)
+            if (frame_size < 1)
                 goto invalid;
             AR_pop(I->stack, &val);
             if (!VAL_TO_BOOL(val))
@@ -579,7 +580,7 @@ static Value exec_function(Interpreter *I, const Function *f, int stack_base)
             break;
 
         case OP_OP1:
-            if (AR_size(I->stack) - stack_base < 1)
+            if (frame_size < 1)
                 goto invalid;
             AR_pop(I->stack, &val);
             switch (argument)
@@ -601,18 +602,16 @@ static Value exec_function(Interpreter *I, const Function *f, int stack_base)
             switch (argument)
             {
             case OP2_AND:
-                val = (VAL_TO_BOOL(val) && VAL_TO_BOOL(val2))
-                    ? val_true : val_false;
+                val = BOOL_TO_VAL(VAL_TO_BOOL(val) && VAL_TO_BOOL(val2));
                 break;
             case OP2_OR:
-                val = (VAL_TO_BOOL(val) || VAL_TO_BOOL(val2))
-                    ? val_true : val_false;
+                val = BOOL_TO_VAL(VAL_TO_BOOL(val) || VAL_TO_BOOL(val2));
                 break;
             case OP2_EQ:
-                val = (val == val2) ? val_true : val_false;
+                val = BOOL_TO_VAL(val == val2);
                 break;
             case OP2_NEQ:
-                val = (val != val2) ? val_true : val_false;
+                val = BOOL_TO_VAL(val != val2);
                 break;
             default:
                 goto invalid;
@@ -631,19 +630,19 @@ static Value exec_function(Interpreter *I, const Function *f, int stack_base)
             break;
 
         case OP_CAL:
-            if (AR_size(I->stack) - stack_base < argument%256)
+            if (argument%256 > frame_size)
                 goto invalid;
             invoke(I, argument%256, argument/256);
             break;
 
         case OP_RET:
+            if (argument > frame_size)
+                goto invalid;
             switch (argument)
             {
             case 0:
                 return val_nil;
             case 1:
-                if (AR_size(I->stack) <= stack_base)
-                    fatal("Empty stack at end of invocation!\n");
                 AR_pop(I->stack, &val);
                 return val;
             default:
@@ -657,8 +656,9 @@ static Value exec_function(Interpreter *I, const Function *f, int stack_base)
 
 invalid:
     fatal("Instruction %d (opcode %d, argument: %d) could not be executed.\n"
-          "Stack height was %d (%d - %d).",
-        i - (Instruction*)I->mod->function_data - 1, (i - 1)->opcode, (i - 1)->argument,
+          "Stack frame size was %d (%d - %d).",
+        i - (Instruction*)I->mod->function_data - 1,
+        (i - 1)->opcode, (i - 1)->argument,
         AR_size(I->stack) - stack_base, AR_size(I->stack), stack_base);
     return val_nil;
 }
@@ -669,18 +669,12 @@ static void invoke(Interpreter *I, int nargs, int nret)
     int stack_base;
     Value result;
 
-    if (nargs <= 0)
-        fatal("Too few arguments for function call (%d)", nargs);
+    if (nargs <= 0 || nargs > (int)AR_size(I->stack))
+        fatal("Invalid number of arguments for function call "
+              "(%d; stack height is %d)", nargs, (int)AR_size(I->stack));
 
-    if (nret < 0)
-        fatal("Too few return values for function call (%d)", nret);
-
-    if (nret > 1)
-        fatal("Too many return values for function call (%d)", nret);
-
-    if (nargs > AR_size(I->stack))
-        fatal("Too many arguments for function call (%d; stack height is %d).",
-            nargs, AR_size(I->stack));
+    if (nret < 0 || nret > 1)
+        fatal("Invalid number of return values for function call (%d)", nret);
 
     /* This currently can't happen since nargs >= 1 and nret <= 1:
     if (AR_size(I->stack) - nargs + nret > MAX_STACK_SIZE)
@@ -864,6 +858,7 @@ static Value builtin_writef(Interpreter *I, int narg, Value *args)
 
 static Value builtin_pause(Interpreter *I, int narg, Value *args)
 {
+    (void)args;  /* unused */
     if (narg > 0)
         warn("Arguments to pause() ignored.\n");
     if (I->callbacks != NULL && I->callbacks->pause != NULL)
@@ -873,6 +868,7 @@ static Value builtin_pause(Interpreter *I, int narg, Value *args)
 
 static Value builtin_quit(Interpreter *I, int narg, Value *args)
 {
+    (void)args;  /* unused */
     if (narg > 0)
         warn("Arguments to quit() ignored.\n");
     if (I->callbacks != NULL && I->callbacks->quit != NULL)
@@ -882,6 +878,7 @@ static Value builtin_quit(Interpreter *I, int narg, Value *args)
 
 static Value builtin_reset(Interpreter *I, int narg, Value *args)
 {
+    (void)args;  /* unused */
     if (narg > 0)
         warn("Arguments to reset() ignored.\n");
     clear_vars(I->vars);

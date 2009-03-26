@@ -127,7 +127,7 @@ static bool refill_input(IOStream *ios)
     {
         ios->pos_out = ios->len_out = 0;
 
-        while (ios->len_out < sizeof(ios->buf_out))
+        while ((size_t)ios->len_out < sizeof(ios->buf_out))
         {
             if (ios->pos_in == ios->len_in)
             {
