@@ -103,7 +103,7 @@ bool ios_open(IOStream *ios, const char *path, IOMode iom, IOCompression ioc)
 bool ios_eof(IOStream *ios)
 {
     return ios->pos_in  == ios->len_in &&
-           ios->pos_out == ios->len_out && feof(ios->fp);
+           ios->pos_out == ios->len_out && feof((FILE*)ios->fp);
 }
 
 void ios_close(IOStream *ios)

@@ -2,7 +2,7 @@ OBJECTS=LzmaDec.o
 CFLAGS=-Os
 
 lzma.a: $(OBJECTS)
-	ar crs $@ $^
+	ar crs $@ $(OBJECTS)
 
 clean:
 	rm -f $(OBJECTS)

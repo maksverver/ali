@@ -1,10 +1,6 @@
-# Debug flags
-CFLAGS=-Wall -g -Os -fmudflap
-LDFLAGS=-lm -fmudflap -lmudflap
-
 # Release flags:
-#CFLAGS=-Os -DWITH_LZMA
-#LDFLAGS=-lm
+CFLAGS=-Os -DWITH_LZMA
+LDFLAGS=-lm
 
 EXECUTABLES=ali alic alidump
 LIB_OBJECTS=debug.o elements.o io.o interpreter.o strings.o \
@@ -20,28 +16,28 @@ all: $(EXECUTABLES)
 tests: $(TESTS)
 
 test-ST: test-ST.o $(LIB_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ test-ST $(LIB_OBJECTS)
 
 test-strings: test-strings.o $(LIB_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ test-strings.o $(LIB_OBJECTS)
 
 syntax.yy.c: syntax.l grammar.tab.h
-	$(LEX) -t $< > $@
+	$(LEX) -t syntax.l > $@
 
 grammar.tab.h: grammar.y
-	$(YACC) -b grammar -d $<
+	$(YACC) -b grammar -d grammar.y
 
 grammar.tab.c: grammar.y
-	$(YACC) -b grammar -d $<
+	$(YACC) -b grammar -d grammar.y
 
 ali: $(ALI_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $(ALI_OBJECTS)
 
 alic: $(ALIC_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $(ALIC_OBJECTS)
 
 alidump: alidump.o
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ alidump.o
 
 lzma/lzma.a:
 	make -C lzma
