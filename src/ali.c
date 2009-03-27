@@ -158,7 +158,7 @@ static void set_normal()
     SetConsoleTextAttribute(hStdOut,
         FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
 #else
-    fputs("\033[22m", stdout);  /* ANSI code for normal intensity */
+    fputs("\033[0m", stdout);  /* ANSI code for normal intensity */
 #endif
 }
 
