@@ -92,3 +92,9 @@ Example of a procedure declaration and statements:
     }
 
 TODO: describe commands, guards.
+
+TODO: describe output formatting:
+      - white space is consumed
+      - automatic line wrapping
+      - explicit newlines (\n)
+      - *bold* and ~quotes~

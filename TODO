@@ -1,11 +1,15 @@
 Most Important Item: write an actual game!
 
+
 alic:
  - (maybe later:) support for forward declarations of functions/procedures?
  - remove duplicates from fragment lists generated from fragment patterns.
 
 ali:
  - BUG: the interpreter will hang on (nearly) infinite loops
+
+ - support more or more general forms?
+   currently, sentences like: "TELL JOHN TO OPEN THE DOOR" don't work.
 
 General:
 - Check memory use with valgrind (interpreter only?)

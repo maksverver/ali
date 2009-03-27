@@ -85,37 +85,58 @@ void filter_output(char *buf)
 }
 
 /* Ensures lines consist of at most line_width characters (not counting newline
-   characters, so a 80-character line consists of 81 characters in total). */
+   characters, so a 80-character line consists of 81 characters in total).
+   Formatting characters are ignored. */
 void line_wrap_output(char *buf, int line_width)
 {
     char *last_space = NULL, *last_newline = buf - 1;
+    int num_ignored = 0;
     for ( ; *buf != '\0'; ++buf)
     {
-        if (*buf == '\n')
+        switch (*buf)
         {
+        case '\n':
             last_space = NULL;
             last_newline = buf;
-        }
-        else
-        if (*buf == ' ')
-        {
+            num_ignored = 0;
+            break;
+
+        case ' ':
             last_space = buf;
-        }
-        else
-        if (buf - last_newline > line_width)
-        {
-            if (last_space != NULL)
+            break;
+
+        case '*':
+        case '~':
+            ++num_ignored;
+            break;
+
+        default:
+            if (buf - last_newline - num_ignored > line_width)
             {
-                *last_space = '\n';
-                last_newline = last_space;
-                last_space   = NULL;
+                if (last_space != NULL)
+                {
+                    *last_space = '\n';
+                    last_newline = last_space;
+                    last_space   = NULL;
+                    num_ignored  = 0;
+                }
             }
         }
     }
 }
 
+void set_bold(bool bold)
+{
+#ifdef WIN32
+    /* TODO */
+#else
+    fputs(bold ? "\033[1m" : "\033[0m", stdout);  /* ANSI code */
+#endif
+}
+
 void process_output(Interpreter *i)
 {
+    bool bold = false;
     char ch = '\0';
     AR_append(i->output, &ch);
     char *buf = AR_data(i->output);
@@ -125,7 +146,23 @@ void process_output(Interpreter *i)
 
     if (*buf != '\0')
     {
-        fputs(buf, stdout);
+        for ( ; *buf != '\0'; ++buf)
+        {
+            switch (*buf)
+            {
+            case '*':
+                bold = !bold;
+                set_bold(bold);
+                break;
+
+            case '~':
+                fputc('"', stdout);
+                break;
+
+            default:
+                fputc(*buf, stdout);
+            }
+        }
         fputs("\n\n", stdout);
         fflush(stdout);
 
