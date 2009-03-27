@@ -12,14 +12,22 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#ifndef WIN32
+#ifdef WIN32  /* Windows */
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else  /* POSIX */
 #include <sys/ioctl.h>
 #endif
 
-FILE *fp_transcript = NULL;
-FILE *fp_savedgame = NULL;
+#ifdef WIN32
+static HANDLE hStdOut;
+#endif
 
-int get_screen_width()
+/* Open file handles */
+static FILE *fp_transcript = NULL;
+static FILE *fp_savedgame = NULL;
+
+static int get_screen_width()
 {
 #ifdef WIN32
     /* Return 79 on windows, because lines of length 80 already wrap! */
@@ -33,7 +41,7 @@ int get_screen_width()
 #endif
 }
 
-void free_interpreter(Interpreter *i)
+static void free_interpreter(Interpreter *i)
 {
     AR_destroy(i->output);
     AR_destroy(i->stack);
@@ -46,7 +54,7 @@ void free_interpreter(Interpreter *i)
    - At most two adjacent newline characters occur in the input.
    - Spaces can only follow non-space characters.
 */
-void filter_output(char *buf)
+static void filter_output(char *buf)
 {
     int num_newlines = 2, num_spaces = 2;
     char *in, *out;
@@ -87,7 +95,7 @@ void filter_output(char *buf)
 /* Ensures lines consist of at most line_width characters (not counting newline
    characters, so a 80-character line consists of 81 characters in total).
    Formatting characters are ignored. */
-void line_wrap_output(char *buf, int line_width)
+static void line_wrap_output(char *buf, int line_width)
 {
     char *last_space = NULL, *last_newline = buf - 1;
     int num_ignored = 0;
@@ -125,34 +133,57 @@ void line_wrap_output(char *buf, int line_width)
     }
 }
 
-void set_bold(bool bold)
+static void set_prompt()
 {
 #ifdef WIN32
-    /* TODO */
+    SetConsoleTextAttribute(hStdOut, FOREGROUND_RED|FOREGROUND_GREEN);
 #else
-    fputs(bold ? "\033[1m" : "\033[0m", stdout);  /* ANSI code */
+    fputs("\033[33m", stdout);  /* ANSI code for dark yellow */
 #endif
 }
 
-void process_output(Interpreter *i)
+static void set_bold()
 {
-    bool bold = false;
+#ifdef WIN32
+    SetConsoleTextAttribute(hStdOut, FOREGROUND_RED | FOREGROUND_GREEN |
+                                     FOREGROUND_BLUE | FOREGROUND_INTENSITY);
+#else
+    fputs("\033[1m", stdout);  /* ANSI code for high intensity */
+#endif
+}
+
+static void set_normal()
+{
+#ifdef WIN32
+    SetConsoleTextAttribute(hStdOut,
+        FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+#else
+    fputs("\033[22m", stdout);  /* ANSI code for normal intensity */
+#endif
+}
+
+static void process_output(Interpreter *i)
+{
     char ch = '\0';
     AR_append(i->output, &ch);
-    char *buf = AR_data(i->output);
+    char *p, *buf = AR_data(i->output);
 
     filter_output(buf);
     line_wrap_output(buf, get_screen_width());
 
     if (*buf != '\0')
     {
-        for ( ; *buf != '\0'; ++buf)
+        bool bold = false;
+        for (p = buf; *p != '\0'; ++p)
         {
-            switch (*buf)
+            switch (*p)
             {
             case '*':
                 bold = !bold;
-                set_bold(bold);
+                if (bold)
+                    set_bold();
+                else
+                    set_normal();
                 break;
 
             case '~':
@@ -160,9 +191,11 @@ void process_output(Interpreter *i)
                 break;
 
             default:
-                fputc(*buf, stdout);
+                fputc(*p, stdout);
             }
         }
+        if (bold)
+            set_normal();
         fputs("\n\n", stdout);
         fflush(stdout);
 
@@ -177,7 +210,7 @@ void process_output(Interpreter *i)
     AR_clear(i->output);
 }
 
-void ali_quit(Interpreter *I, int code)
+static void ali_quit(Interpreter *I, int code)
 {
     if (fp_savedgame != NULL)
         fclose(fp_savedgame);
@@ -189,7 +222,7 @@ void ali_quit(Interpreter *I, int code)
     exit(code);
 }
 
-void ali_pause(Interpreter *I)
+static void ali_pause(Interpreter *I)
 {
     process_output(I);
 
@@ -202,7 +235,7 @@ void ali_pause(Interpreter *I)
     }
 }
 
-char *get_time_str()
+static char *get_time_str()
 {
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
@@ -213,7 +246,7 @@ char *get_time_str()
     return buf;
 }
 
-void load_game(Interpreter *I)
+static void load_game(Interpreter *I)
 {
     fseek(fp_savedgame, 0, SEEK_SET);
     if (fread(I->vars->vals, sizeof(Value), I->vars->nval, fp_savedgame)
@@ -223,7 +256,7 @@ void load_game(Interpreter *I)
     }
 }
 
-void save_game(Interpreter *I)
+static void save_game(Interpreter *I)
 {
     fseek(fp_savedgame, 0, SEEK_SET);
     if (fwrite(I->vars->vals, sizeof(Value), I->vars->nval, fp_savedgame)
@@ -234,17 +267,19 @@ void save_game(Interpreter *I)
     fflush(fp_savedgame);
 }
 
-void command_loop(Interpreter *I)
+static void command_loop(Interpreter *I)
 {
     char line[1024];
     for (;;)
     {
+        set_prompt();
         fputs("> ", stdout);
         fflush(stdout);
         char *line_ptr = fgets(line, sizeof(line), stdin);
         if (line_ptr == NULL)
             break;
         fputc('\n', stdout);
+        set_normal();
 
         char *eol = strchr(line, '\n');
         if (eol == NULL)
@@ -266,7 +301,7 @@ void command_loop(Interpreter *I)
     }
 }
 
-void select_game(Interpreter *I)
+static void select_game(Interpreter *I)
 {
     char filename[128];
     int n, c;
@@ -277,7 +312,12 @@ void select_game(Interpreter *I)
         if (stat(filename, &st) == 0 && S_ISREG(st.st_mode))
         {
             if (n == 1)
-                printf("Welcome back!\n\nWould you like to:\n");
+            {
+                set_bold();
+                printf("Welcome back!\n");
+                set_normal();
+                printf("\nWould you like to:\n");
+            }
             struct tm *tm = localtime(&st.st_ctime);
             printf("%3d) Resume saved game %d, "
                    "last played on %04d/%02d/%02d %02d:%02d\n",
@@ -304,11 +344,13 @@ void select_game(Interpreter *I)
     {
         for (;;)
         {
+            set_prompt();
             printf("\n> ");
             fflush(stdout);
             char line[1024];
             if (fgets(line, sizeof(line), stdin) == NULL)
                 fatal("Failed to read input.");
+            set_normal();
             if (sscanf(line, "%d", &c) != 1)
             {
                 printf("\nResponse not understood.\n");
@@ -354,6 +396,10 @@ void select_game(Interpreter *I)
 
 int main(int argc, char *argv[])
 {
+#ifdef WIN32
+    hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+#endif
+
     Array stack = AR_INIT(sizeof(Value));
     Array output = AR_INIT(sizeof(char));
     Callbacks callbacks = { &ali_quit, &ali_pause };
