@@ -129,8 +129,9 @@ void patch_jmp(int offset)
 
 int resolve_global(const char *str)
 {
+    assert(str[0] == '@');
     const void *value = (void*)ST_size(&st_vars);
-    const void *key   = str;
+    const void *key   = str + 1;
     if (!ST_find_or_insert_entry(&st_vars, &key, &value))
         AR_append(&ar_vars, &key);
     return (long)value;
@@ -138,16 +139,17 @@ int resolve_global(const char *str)
 
 int resolve_local(const char *id)
 {
+    assert(id[0] == '$');
     int n;
 
     for (n = 0; n < (int)AR_size(&func_params); ++n)
     {
-        if (strcmp(id, *(char**)AR_at(&func_params, n)) == 0)
+        if (strcmp(id + 1, *(char**)AR_at(&func_params, n)) == 0)
             break;
     }
     if (n == (int)AR_size(&func_params))
     {
-        char *str = strdup(id);
+        char *str = strdup(id + 1);
         AR_append(&func_params, &str);
         ++func_nlocal;
     }
@@ -216,8 +218,9 @@ void write_string()
 
 int resolve_symbol(const char *str)
 {
+    assert(str[0] == ':');
     const void *value = (void*)(long)next_symbol_id;
-    const void *key   = str;
+    const void *key   = str + 1;
     if (!ST_find_or_insert_entry(&st_symbols, &key, &value))
         --next_symbol_id;
     return (long)value;
@@ -225,8 +228,9 @@ int resolve_symbol(const char *str)
 
 int resolve_property(const char *str)
 {
+    assert(str[0] == '.');
     const void *value = (void*)ST_size(&st_properties);
-    const void *key   = str;
+    const void *key   = str + 1;
     if (!ST_find_or_insert_entry(&st_properties, &key, &value))
         AR_append(&ar_properties, &key);
     return (long)value;
@@ -304,7 +308,8 @@ void begin_function(const char *id, int nret)
 
 void add_parameter(const char *id)
 {
-    char *str = strdup(id);
+    assert(id[0] == '$');
+    char *str = strdup(id + 1);
     AR_append(&func_params, &str);
 }
 
@@ -1030,11 +1035,26 @@ void create_object_file()
 
 void parser_create()
 {
+    /* Register built-in variables */
+    {
+        const char * const *name;
+        for (name = builtin_var_names; *name != NULL; ++name)
+        {
+            const void *key   = *name;
+            const void *value = (void*)ST_size(&st_vars);
+            ST_insert_entry(&st_vars, &key, &value);
+            AR_append(&ar_vars, &key);
+        }
+        assert(ST_size(&st_vars) == AR_size(&ar_vars));
+    }
+
     /* Register built-in functions */
-    const char * const *name;
-    long func_id = 0;
-    for (name = builtin_names; *name != NULL; ++name)
-        ST_insert(&st_functions, *name, (void*)--func_id);
+    {
+        const char * const *name;
+        long func_id = 0;
+        for (name = builtin_func_names; *name != NULL; ++name)
+            ST_insert(&st_functions, *name, (void*)--func_id);
+    }
 }
 
 void parser_destroy()

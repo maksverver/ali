@@ -1,5 +1,73 @@
 Most Important Item: write an actual game!
 
+ - TODO: move builtin variables, so these variables can be added in the 
+         interpreter without breaking compatibility with existing modules.
+         (use negative indices, just as with functions)
+
+ - more general parsing table (so interpreter becomes simpler)
+
+    Proposed new command table structure:
+        (fragment table is modified to contain whole words only)
+
+        for each command context:
+            reference to prompt string (index into string table)
+
+            number of commands
+
+            (command list)
+            for each command:
+                guard function
+                body function
+
+            number of parser states
+
+            (state list)
+            for each state:
+                first transition (index into transition list)
+                (last transition is given as first transition of next state,
+                 or number-of-transitions for the last entry)
+
+            number of transitions
+
+            (transition list)
+            for each transition: (ordered by old state)
+                fragment id
+                new state
+
+            (state/command mapping)
+            for each state:
+                first command (index into command list)
+                (last command is given as first command of next state,
+                 or number-of-commands for the last entry)
+
+            number of commands
+
+            (command list)
+            for each command:
+                guard (reference into function table, or nil)
+                body  (reference into function table)
+
+            How space efficient is this? How easy is this to implement?
+            What are the alternatives?
+
+
+ - later: support multiple parsing contexts, with different prompts, and a
+          way to swap between them. This allows easier implementation of
+          choices.
+   proposal: separate command sections, identified by symbols, and a new
+   function to change the active command set?
+
+   e.g.:
+    function initialize() {
+        set_context(:intro);
+    }
+    context :default;
+        LOOK { writeln("You are in a room") }
+    context :intro "Would you like an introduction [yes/no]";
+        Y, YES { writeln("Blablabla"); set_context(:default); }
+        N, NO { set_context(:default); }
+
+
 
 alic:
  - (maybe later:) support for forward declarations of functions/procedures?
@@ -10,6 +78,9 @@ ali:
 
  - support more or more general forms?
    currently, sentences like: "TELL JOHN TO OPEN THE DOOR" don't work.
+
+ - remove English text from interpreter
+   (or at least allow the game to override them?)
 
 General:
 - Check memory use with valgrind (interpreter only?)

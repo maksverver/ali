@@ -21,13 +21,16 @@ static Value builtin_pause   (Interpreter *I, int narg, Value *args);
 static Value builtin_quit    (Interpreter *I, int narg, Value *args);
 static Value builtin_reset   (Interpreter *I, int narg, Value *args);
 
-Builtin builtins[NUM_BUILTINS] = {
+Builtin builtins[NUM_BUILTIN_FUNCS] = {
     builtin_write, builtin_writeln, builtin_writef,
     builtin_pause, builtin_quit, builtin_reset };
 
-const char * const builtin_names[NUM_BUILTINS + 1] = {
+const char * const builtin_func_names[NUM_BUILTIN_FUNCS + 1] = {
     "write", "writeln", "writef", "pause", "quit", "reset", NULL };
 
+const char * const builtin_var_names[NUM_BUILTIN_VARS + 1] = {
+    "title",        "subtitle",     "RESERVED02",   "RESERVED03",
+    "RESERVED04",   "RESERVED05",   "RESERVED06",   "RESERVED07", NULL };
 
 
 /* Invokes a function.
@@ -109,6 +112,7 @@ static bool read_header(IOStream *ios, Module *mod)
         read_int32(ios, &mod->num_entities) &&
         read_int32(ios, &mod->num_properties) &&
         read_int32(ios, &mod->num_globals) &&
+            mod->num_globals >= NUM_BUILTIN_VARS &&
         read_int32(ios, &mod->init_func) &&
         skip(ios, size - 32);
 }
@@ -689,7 +693,7 @@ static void invoke(Interpreter *I, int nargs, int nret)
     if (func_id < 0)
     {
         func_id = -func_id - 1;
-        if (func_id > NUM_BUILTINS)
+        if (func_id > NUM_BUILTIN_FUNCS)
             fatal("Invalid system call (%d).", func_id);
         result = builtins[func_id](I, nargs,
             (Value*)AR_data(I->stack) + AR_size(I->stack) - nargs);

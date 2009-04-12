@@ -4,6 +4,7 @@
 #include "interpreter.h"
 #include "strings.h"
 #include "Array.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -11,6 +12,17 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+
+#ifdef WITH_GARGLK
+#define WITH_GLK
+#endif
+
+#ifdef WITH_GLK
+
+#include <glk.h>
+#include <glkstart.h>
+
+#else /* ndef WITH_GLK */
 
 #ifdef WIN32  /* Windows */
 #define WIN32_LEAN_AND_MEAN
@@ -23,10 +35,31 @@
 static HANDLE hStdOut;
 #endif
 
-/* Open file handles */
-static FILE *fp_transcript = NULL;
-static FILE *fp_savedgame = NULL;
+#endif /* ndef WITH_GLK */
 
+
+static void ali_quit(Interpreter *I, int code);
+static void ali_pause(Interpreter *I);
+
+
+/* Global variables: */
+static const char *module_path = "module.alo";
+static FILE *fp_transcript = NULL;      /* transcript file handle */
+static FILE *fp_savedgame = NULL;       /* saved game file handle */
+
+/* Interpreter state: */
+static Interpreter interpreter;
+static Interpreter * const I = &interpreter;
+static Array stack = AR_INIT(sizeof(Value));
+static Array output = AR_INIT(sizeof(char));
+static Callbacks callbacks = { &ali_quit, &ali_pause };
+
+#ifdef WITH_GLK
+static winid_t mainwin;
+#endif
+
+
+#ifndef WITH_GLK
 static int get_screen_width()
 {
 #ifdef WIN32
@@ -40,13 +73,14 @@ static int get_screen_width()
         return 80;
 #endif
 }
+#endif /* ndef WITH_GLK */
 
-static void free_interpreter(Interpreter *i)
+static void free_interpreter(Interpreter *I)
 {
-    AR_destroy(i->output);
-    AR_destroy(i->stack);
-    free_vars(i->vars);
-    free_module(i->mod);
+    AR_destroy(I->output);
+    AR_destroy(I->stack);
+    free_vars(I->vars);
+    free_module(I->mod);
 }
 
 /* Filter output string such that:
@@ -133,46 +167,173 @@ static void line_wrap_output(char *buf, int line_width)
     }
 }
 
+/* Convert UTF-8 sequence to corresponding Latin-1 characters; unsupported
+   characters are silently removed. */
+static void utf8_to_latin1(char *in)
+{
+    char *out = in;
+    while (*in)
+    {
+        if ((*in & 0x80) == 0)
+        {
+            *out++ = *in++; // copy single-byte character
+        }
+        else
+        {
+            if ((*in & 0xe0) == 0xc0) // decode two-byte character
+            {
+                int ch = ((in[0] & 0x1f) << 6) | (in[1] & 0x3f);
+                in += 2;
+                if (ch < 256) *out++ = ch;
+            }
+            /* in principle we should decode three and four byte encodings too,
+               but in practice these are rarely used for latin-1 characters. */
+        }
+    }
+    *out = '\0';
+}
+
 static void set_prompt()
 {
+#ifdef WITH_GLK
+    glk_set_style(style_Emphasized);
+#else
 #ifdef WIN32
     SetConsoleTextAttribute(hStdOut, FOREGROUND_RED|FOREGROUND_GREEN);
 #else
     fputs("\033[33m", stdout);  /* ANSI code for dark yellow */
 #endif
+#endif /* ndef WITH_GLK */
 }
 
 static void set_bold()
 {
+#ifdef WITH_GLK
+    glk_set_style(style_Emphasized);
+#else
 #ifdef WIN32
     SetConsoleTextAttribute(hStdOut, FOREGROUND_RED | FOREGROUND_GREEN |
                                      FOREGROUND_BLUE | FOREGROUND_INTENSITY);
 #else
     fputs("\033[1m", stdout);  /* ANSI code for high intensity */
 #endif
+#endif /* ndef WITH_GLK */
 }
 
 static void set_normal()
 {
+#ifdef WITH_GLK
+    glk_set_style(style_Normal);
+#else
 #ifdef WIN32
     SetConsoleTextAttribute(hStdOut,
         FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
 #else
     fputs("\033[0m", stdout);  /* ANSI code for normal intensity */
 #endif
+#endif /* ndef WITH_GLK */
 }
 
-static void process_output(Interpreter *i)
+static void write_ch(int ch)
 {
+#ifdef WITH_GLK
+    glk_put_char(ch);
+#else
+    fputc(ch, stdout);
+#endif
+}
+
+static char *read_line()
+{
+    static char line[1024];
+#ifdef WITH_GLK
+    glk_request_line_event(mainwin, line, sizeof(line) - 1, 0);
+    for (;;)
+    {
+        event_t ev;
+        glk_select(&ev);
+        if (ev.type == evtype_LineInput && ev.win == mainwin)
+        {
+            line[ev.val1] = '\0';
+            return line;
+        }
+    }
+#else
+    fflush(stdout);
+    if (fgets(line, sizeof(line), stdin) == NULL)
+        return NULL;
+    return line;
+#endif /* ndef WITH_GLK */
+}
+
+static void write_str(const char *s)
+{
+#ifdef WITH_GLK
+    glk_put_string((char*)s);
+#else
+    fputs(s, stdout);
+#endif
+}
+
+static void write_fmt(const char *format, ...)
+{
+    char buf[1024];
+    va_list ap;
+
+    va_start(ap, format);
+    vsnprintf(buf, sizeof(buf), format, ap);
+    va_end(ap);
+
+    return write_str(buf);
+}
+
+static const char *get_string_var(Interpreter *I, int var, const char *def)
+{
+    if (var < 0 || var >= I->vars->nval)
+        return def;
+    int str = (int)I->vars->vals[var];
+    if (str < 0 || str >= I->mod->nstring)
+        return def;
+    return I->mod->strings[str];
+}
+
+static void process_output(Interpreter *I)
+{
+#ifdef WITH_GLK
+    /* This doesn't really seem to work as advertised 
+       (at least not with Gargoyle) */
+/*
+    const char *header_str = get_string_var(I, var_title, NULL);
+    if (header_str != NULL)
+    {
+        glk_set_style(style_Header);
+        glk_put_string((char*)header_str);
+        glk_put_char('\n');
+    }
+    const char *subheader_str = get_string_var(I, var_subtitle, NULL);
+    if (subheader_str != NULL)
+    {
+        glk_set_style(style_Subheader);
+        glk_put_string((char*)subheader_str);
+        glk_put_char('\n');
+    }
+*/
+#endif
+
     char ch = '\0';
-    AR_append(i->output, &ch);
-    char *p, *buf = AR_data(i->output);
+    AR_append(I->output, &ch);
+    char *p, *buf = AR_data(I->output);
 
     filter_output(buf);
+#ifdef WITH_GLK
+    utf8_to_latin1(buf);
+#else
     line_wrap_output(buf, get_screen_width());
+#endif /* ndef WITH_GLK */
 
     if (*buf != '\0')
     {
+        set_normal();
         bool bold = false;
         for (p = buf; *p != '\0'; ++p)
         {
@@ -187,17 +348,17 @@ static void process_output(Interpreter *i)
                 break;
 
             case '~':
-                fputc('"', stdout);
+                write_ch('"');
                 break;
 
             default:
-                fputc(*p, stdout);
+                write_ch(*p);
             }
         }
         if (bold)
             set_normal();
-        fputs("\n\n", stdout);
-        fflush(stdout);
+        write_ch('\n');
+        write_ch('\n');
 
         if (fp_transcript != NULL)
         {
@@ -207,7 +368,17 @@ static void process_output(Interpreter *i)
         }
     }
 
-    AR_clear(i->output);
+    AR_clear(I->output);
+}
+
+static void do_exit(int code)
+{
+#ifdef WITH_GLK
+    (void)code;  /* ignored */
+    glk_exit();
+#else
+    exit(code);
+#endif
 }
 
 static void ali_quit(Interpreter *I, int code)
@@ -219,20 +390,14 @@ static void ali_quit(Interpreter *I, int code)
 
     process_output(I);
     free_interpreter(I);
-    exit(code);
+    do_exit(code);
 }
 
 static void ali_pause(Interpreter *I)
 {
     process_output(I);
-
-    fputs("Press Enter to continue...\n", stdout);
-    fflush(stdout);
-    char line[1024];
-    if (fgets(line, sizeof(line), stdin) == NULL)
-    {
-        /* error ignored */
-    }
+    write_str("Press Enter to continue...\n");
+    read_line();
 }
 
 static char *get_time_str()
@@ -269,29 +434,15 @@ static void save_game(Interpreter *I)
 
 static void command_loop(Interpreter *I)
 {
-    char line[1024];
     for (;;)
     {
         set_prompt();
-        fputs("> ", stdout);
-        fflush(stdout);
-        char *line_ptr = fgets(line, sizeof(line), stdin);
-        if (line_ptr == NULL)
-            break;
-        fputc('\n', stdout);
+        write_str("> ");
+        char *line = read_line();
         set_normal();
-
-        char *eol = strchr(line, '\n');
-        if (eol == NULL)
-        {
-            if (strlen(line) == sizeof(line) - 1)
-                warn("Input line was truncated!");
-        }
-        else
-        {
-            *eol = '\0';
-        }
-
+        write_str("\n");
+        if (line == NULL)
+            break;
         normalize(line);
         if (fp_transcript != NULL)
             fprintf(fp_transcript, "%s> %s\n\n", get_time_str(), line);
@@ -314,22 +465,22 @@ static void select_game(Interpreter *I)
             if (n == 1)
             {
                 set_bold();
-                printf("Welcome back!\n");
+                write_str("Welcome back!\n");
                 set_normal();
-                printf("\nWould you like to:\n");
+                write_str("\nWould you like to:\n");
             }
             struct tm *tm = localtime(&st.st_ctime);
-            printf("%3d) Resume saved game %d, "
-                   "last played on %04d/%02d/%02d %02d:%02d\n",
-                   n, n, tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-                   tm->tm_hour, tm->tm_min);
+            write_fmt( "%3d) Resume saved game %d, "
+                       "last played on %04d/%02d/%02d %02d:%02d\n",
+                       n, n, tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                       tm->tm_hour, tm->tm_min );
         }
         else
         {
             if (n > 1)
             {
-                printf("%3d) Start a new game\n", n);
-                printf("  0) Quit\n");
+                write_fmt("%3d) Start a new game\n", n);
+                write_str("  0) Quit\n");
             }
             break;
         }
@@ -345,20 +496,20 @@ static void select_game(Interpreter *I)
         for (;;)
         {
             set_prompt();
-            printf("\n> ");
-            fflush(stdout);
-            char line[1024];
-            if (fgets(line, sizeof(line), stdin) == NULL)
+            write_str("\n> ");
+
+            char *line = read_line();
+            if (line == NULL)
                 fatal("Failed to read input.");
             set_normal();
             if (sscanf(line, "%d", &c) != 1)
             {
-                printf("\nResponse not understood.\n");
+                write_str("\nResponse not understood.\n");
                 continue;
             }
             if (c < 0 || c > n)
             {
-                printf("\nPlease select an option between 0 and %d.\n", n);
+                write_fmt("\nPlease select an option between 0 and %d.\n", n);
                 continue;
             }
             break;
@@ -366,7 +517,7 @@ static void select_game(Interpreter *I)
     }
 
     if (c == 0)
-        exit(0);
+        do_exit(0);
 
     /* Open saved game */
     snprintf(filename, sizeof(filename), "savedgame-%d.bin", c);
@@ -382,48 +533,36 @@ static void select_game(Interpreter *I)
 
     if (c < n)
     {
-        printf("\nResuming game %d.\n\n", c);
+        write_fmt("\nResuming game %d.\n\n", c);
         load_game(I);
     }
     else
     {
-        fputc('\n', stdout);
+        write_ch('\n');
         reinitialize(I);
         save_game(I);
         process_output(I);
     }
 }
 
-int main(int argc, char *argv[])
+void glk_main()
 {
-#ifdef WIN32
-    hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+#ifdef WITH_GLK
+    mainwin = glk_window_open(0, 0, 0, wintype_TextBuffer, 0);
+    if (!mainwin)
+        return;
+    glk_set_window(mainwin);
 #endif
 
-    Array stack = AR_INIT(sizeof(Value));
-    Array output = AR_INIT(sizeof(char));
-    Callbacks callbacks = { &ali_quit, &ali_pause };
-    Interpreter interpreter;
-
-    const char *path;
     IOStream ios;
 
-    if (argc > 2 || (argc > 1 && argv[1][0] == '-'))
-    {
-        printf("Usage: ali [<module>]\n");
-        return 0;
-    }
-
-    memset(&interpreter, 0, sizeof(interpreter));
-
     /* Attempt to load executable module */
-    path = (argc == 2 ? argv[1] :"module.alo");
-    if(!ios_open(&ios, path, IOM_RDONLY, IOC_AUTO))
-        fatal("Unable to open file \"%s\" for reading.", path);
+    if(!ios_open(&ios, module_path, IOM_RDONLY, IOC_AUTO))
+        fatal("Unable to open file \"%s\" for reading.", module_path);
     interpreter.mod = load_module(&ios);
     ios_close(&ios);
     if (interpreter.mod == NULL)
-        fatal("Invalid module file: \"%s\".", path);
+        fatal("Invalid module file: \"%s\".", module_path);
 
     /* Initialize rest of the interpreter */
     interpreter.vars      = alloc_vars(interpreter.mod);
@@ -439,6 +578,65 @@ int main(int argc, char *argv[])
     command_loop(&interpreter);
     warn("Unexpected end of input!");
     ali_quit(&interpreter, 1);
+}
+
+#ifdef WITH_GLK
+
+glkunix_argumentlist_t glkunix_arguments[] = {
+    { "", glkunix_arg_ValueCanFollow, "filename: The game file to load." },
+    { NULL, glkunix_arg_End, NULL }
+};
+
+int glkunix_startup_code(glkunix_startup_t *data)
+{
+    if (data->argc < 1 || data->argc > 2)
+        return false;
+
+    if (data->argc > 1)
+        module_path = data->argv[1];
+
+    return true;
+}
+
+#else
+
+int main(int argc, char *argv[])
+{
+#ifdef WIN32
+    hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+#endif
+
+    if (argc > 2 || (argc > 1 && argv[1][0] == '-'))
+    {
+        printf("Usage: ali [<module>]\n");
+        return 0;
+    }
+
+    if (argc > 1)
+        module_path = argv[1];
+
+    glk_main();
 
     return 0;
 }
+#endif /* ndef WITH_GLK */
+
+#ifdef WITH_GARGLK
+int main(int argc, char *argv[])
+{
+    glkunix_startup_t startdata;
+    startdata.argc = argc;
+    startdata.argv = malloc(argc * sizeof(char*));
+    memcpy(startdata.argv, argv, argc * sizeof(char*));
+
+    gli_startup(argc, argv);
+
+    if (!glkunix_startup_code(&startdata))
+            glk_exit();
+
+    glk_main();
+    glk_exit();
+
+    return 0;
+}
+#endif

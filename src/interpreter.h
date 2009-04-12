@@ -44,9 +44,14 @@ extern const Value val_true, val_false, val_nil;
 #define VAL_TO_BOOL(v)  ((v) > 0 ? true : false)
 #define BOOL_TO_VAL(b)  ((b) ? val_true: val_false)
 
-/* List of built-in functions (terminated by NULL) */
-#define NUM_BUILTINS (6)
-extern const char * const builtin_names[NUM_BUILTINS + 1];
+/* List of built-in function names (terminated by NULL) */
+#define NUM_BUILTIN_FUNCS (6)
+extern const char * const builtin_func_names[NUM_BUILTIN_FUNCS + 1];
+
+/* List of built-in variable names (terminated by NULL) */
+#define NUM_BUILTIN_VARS (8)
+extern const char * const builtin_var_names[NUM_BUILTIN_VARS + 1];
+enum builtin_var_ids { var_title, var_subtitle };
 
 
 typedef struct Module

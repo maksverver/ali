@@ -24,7 +24,7 @@ char *normalize(char *str)
     }
 
     /* Remove trailing space */
-    if (q != str && q[-1] == ' ')
+    if (q != str && isspace(q[-1]))
         --q;
 
     *q = '\0';
