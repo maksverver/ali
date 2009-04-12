@@ -1,8 +1,8 @@
 # Release flags:
-CFLAGS=-Os -DWITH_LZMA
+CFLAGS=-fPIC -fvisibility=hidden -Os -DWITH_LZMA
 LDFLAGS=-lm
 
-EXECUTABLES=ali alic alidump ali-glk ali-garglk
+EXECUTABLES=ali alic alidump ali-glk
 LIB_OBJECTS=debug.o elements.o io.o interpreter.o strings.o \
 	ScapegoatTree.o Array.o lzma/lzma.a
 ALI_OBJECTS=ali.o $(LIB_OBJECTS)
@@ -40,10 +40,9 @@ alidump: alidump.o
 	$(CC) $(LDFLAGS) -o $@ alidump.o
 
 ali-glk: $(ALI_OBJECTS) ali.c
-	$(CC) $(CFLAGS) -I../cheapglk -DWITH_GLK ali.c -o $@ $(LDFLAGS) $(LIB_OBJECTS) ../cheapglk/libcheapglk.a
-
-ali-garglk: $(ALI_OBJECTS) ali.c
-	$(CC) $(CFLAGS) -I../cheapglk -DWITH_GARGLK ali.c -o $@ $(LDFLAGS) $(LIB_OBJECTS) -lgarglk
+	$(CC) $(CFLAGS) -I../cheapglk -DWITH_GLK ali.c -o $@ \
+		$(LDFLAGS) -rdynamic \
+		$(LIB_OBJECTS) ../glkloader/libglkloader.a -ldl
 
 lzma/lzma.a:
 	make -C lzma

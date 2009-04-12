@@ -13,6 +13,12 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#ifdef _MSC_VER
+#define EXPORT __declspec(dllexport)
+#else /* gcc */
+#define EXPORT __attribute__ ((visibility("default")))
+#endif
+
 #ifdef WITH_GARGLK
 #define WITH_GLK
 #endif
@@ -545,7 +551,7 @@ static void select_game(Interpreter *I)
     }
 }
 
-void glk_main()
+static void do_main()
 {
 #ifdef WITH_GLK
     mainwin = glk_window_open(0, 0, 0, wintype_TextBuffer, 0);
@@ -582,20 +588,9 @@ void glk_main()
 
 #ifdef WITH_GLK
 
-glkunix_argumentlist_t glkunix_arguments[] = {
-    { "", glkunix_arg_ValueCanFollow, "filename: The game file to load." },
-    { NULL, glkunix_arg_End, NULL }
-};
-
-int glkunix_startup_code(glkunix_startup_t *data)
+EXPORT void glk_main(void)
 {
-    if (data->argc < 1 || data->argc > 2)
-        return false;
-
-    if (data->argc > 1)
-        module_path = data->argv[1];
-
-    return true;
+    do_main();
 }
 
 #else
@@ -615,7 +610,7 @@ int main(int argc, char *argv[])
     if (argc > 1)
         module_path = argv[1];
 
-    glk_main();
+    do_main();
 
     return 0;
 }
