@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
-void info(const char *fmt, ...)
+void debug_info(const char *fmt, ...)
 {
     va_list ap;
 
@@ -14,7 +14,7 @@ void info(const char *fmt, ...)
     va_end(ap);
 }
 
-void warn(const char *fmt, ...)
+void debug_warn(const char *fmt, ...)
 {
     va_list ap;
 
@@ -25,7 +25,7 @@ void warn(const char *fmt, ...)
     va_end(ap);
 }
 
-void error(const char *fmt, ...)
+void debug_error(const char *fmt, ...)
 {
     va_list ap;
 
@@ -36,7 +36,7 @@ void error(const char *fmt, ...)
     va_end(ap);
 }
 
-void fatal(const char *fmt, ...)
+void debug_fatal(const char *fmt, ...)
 {
     va_list ap;
 
@@ -47,15 +47,4 @@ void fatal(const char *fmt, ...)
     va_end(ap);
 
     exit(1);
-}
-
-void *debug_malloc(size_t size, const char *file, int line)
-{
-    void *res = malloc(size);
-    if (res == NULL)
-    {
-        error("malloc failed at %s:%d", file, line);
-        abort();
-    }
-    return res;
 }

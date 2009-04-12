@@ -14,8 +14,8 @@ void debug_warn(const char *fmt, ...);
 void debug_error(const char *fmt, ...);
 __attribute__((__noreturn__))
 void debug_fatal(const char *fmt, ...);
-void *debug_malloc(size_t size, const char *file, int line);
 
 #define dmalloc(size) debug_malloc(size, __FILE__, __LINE__)
+void *debug_malloc(size_t size, const char *file, int line);
 
 #endif /* ndef DEBUG_H_INCLUDED */

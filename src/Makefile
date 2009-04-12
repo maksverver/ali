@@ -2,11 +2,13 @@
 CFLAGS=-fPIC -fvisibility=hidden -Os -DWITH_LZMA
 LDFLAGS=-lm
 
-EXECUTABLES=ali alic alidump ali-glk
-LIB_OBJECTS=debug.o elements.o io.o interpreter.o strings.o \
+EXECUTABLES=ali alic alidump ali-garglk
+COMMON_OBJECTS=dmalloc.o elements.o io.o interpreter.o strings.o \
 	ScapegoatTree.o Array.o lzma/lzma.a
+LIB_OBJECTS=debug.o $(COMMON_OBJECTS)
 ALI_OBJECTS=ali.o $(LIB_OBJECTS)
 ALIC_OBJECTS=alic.o syntax.yy.o grammar.tab.o $(LIB_OBJECTS)
+ALI_GLK_OBJECTS=debug-glk.o $(COMMON_OBJECTS)
 TESTS=test-ST test-strings
 
 .PHONY: all tests clean distclean
@@ -39,10 +41,17 @@ alic: $(ALIC_OBJECTS)
 alidump: alidump.o
 	$(CC) $(LDFLAGS) -o $@ alidump.o
 
-ali-glk: $(ALI_OBJECTS) ali.c
+debug-glk.o: debug-glk.c
+	$(CC) $(CFLAGS) -I../cheapglk -c $<
+
+ali-garglk: $(ALI_GLK_OBJECTS) ali.c
+	$(CC) $(CFLAGS) -I../cheapglk -DWITH_GARGLK ali.c -o $@ \
+		$(LDFLAGS) $(ALI_GLK_OBJECTS) -Wl,--subsystem,windows -L../gargoyle -lgarglk
+
+ali-glk: $(ALI_GLK_OBJECTS) ali.c
 	$(CC) $(CFLAGS) -I../cheapglk -DWITH_GLK ali.c -o $@ \
 		$(LDFLAGS) -rdynamic \
-		$(LIB_OBJECTS) ../glkloader/libglkloader.a -ldl
+		$(ALI_GLK_OBJECTS) ../glkloader/libglkloader.a -ldl
 
 lzma/lzma.a:
 	make -C lzma

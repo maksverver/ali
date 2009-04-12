@@ -20,7 +20,9 @@
 #endif
 
 #ifdef WITH_GARGLK
+#ifndef WITH_GLK
 #define WITH_GLK
+#endif
 #endif
 
 #ifdef WITH_GLK
@@ -619,19 +621,11 @@ int main(int argc, char *argv[])
 #ifdef WITH_GARGLK
 int main(int argc, char *argv[])
 {
-    glkunix_startup_t startdata;
-    startdata.argc = argc;
-    startdata.argv = malloc(argc * sizeof(char*));
-    memcpy(startdata.argv, argv, argc * sizeof(char*));
-
+    if (argc > 1)
+        module_path = argv[1];
     gli_startup(argc, argv);
-
-    if (!glkunix_startup_code(&startdata))
-            glk_exit();
-
     glk_main();
     glk_exit();
-
     return 0;
 }
 #endif
