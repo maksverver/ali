@@ -1,27 +1,22 @@
 # Release flags:
-CFLAGS=-fPIC -fvisibility=hidden -Os -DWITH_LZMA
+CFLAGS=-fPIC -fvisibility=hidden -Os -DWITH_LZMA -Wall -Wextra
 LDFLAGS=-lm
 
-EXECUTABLES=ali alic alidump ali-garglk
-COMMON_OBJECTS=dmalloc.o elements.o io.o interpreter.o strings.o \
-	ScapegoatTree.o Array.o lzma/lzma.a
-LIB_OBJECTS=debug.o $(COMMON_OBJECTS)
-ALI_OBJECTS=ali.o $(LIB_OBJECTS)
-ALIC_OBJECTS=alic.o syntax.yy.o grammar.tab.o $(LIB_OBJECTS)
-ALI_GLK_OBJECTS=debug-glk.o $(COMMON_OBJECTS)
-TESTS=test-ST test-strings
+# Debug:
+CFLAGS=-fPIC -O0 -DWITH_LZMA -Wall -Wextra -fmudflap -g
+LDFLAGS=-lm -fmudflap -lmudflap
 
-.PHONY: all tests clean distclean
+EXECUTABLES=ali alic alidump ali-garglk
+COMMON_OBJECTS=dmalloc.o elements.o io.o strings.o interpreter.o parser.o \
+	ScapegoatTree.o Array.o lzma/lzma.a
+COMMON_LIBS=common.a lzma/lzma.a
+ALI_OBJECTS=ali.o debug.o
+ALIC_OBJECTS=alic.o syntax.yy.o grammar.tab.o debug.o
+ALI_GLK_OBJECTS=debug-glk.o
+
+.PHONY: all clean distclean
 
 all: $(EXECUTABLES)
-
-tests: $(TESTS)
-
-test-ST: test-ST.o $(LIB_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ test-ST $(LIB_OBJECTS)
-
-test-strings: test-strings.o $(LIB_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ test-strings.o $(LIB_OBJECTS)
 
 syntax.yy.c: syntax.l grammar.tab.h
 	$(LEX) -t syntax.l > $@
@@ -32,32 +27,37 @@ grammar.tab.h: grammar.y
 grammar.tab.c: grammar.y
 	$(YACC) -b grammar -d grammar.y
 
-ali: $(ALI_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $(ALI_OBJECTS)
+common.a: $(COMMON_OBJECTS)
+	$(AR) crs common.a $(COMMON_OBJECTS)
 
-alic: $(ALIC_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $(ALIC_OBJECTS)
+ali: $(ALI_OBJECTS) $(COMMON_LIBS)
+	$(CC) $(LDFLAGS) -o $@ $(ALI_OBJECTS) $(COMMON_LIBS)
+
+alic: $(ALIC_OBJECTS) $(COMMON_LIBS)
+	$(CC) $(LDFLAGS) -o $@ $(ALIC_OBJECTS) $(COMMON_LIBS)
 
 alidump: alidump.o
 	$(CC) $(LDFLAGS) -o $@ alidump.o
 
 debug-glk.o: debug-glk.c
-	$(CC) $(CFLAGS) -I../cheapglk -c $<
+	$(CC) $(CFLAGS) -I../cheapglk -c debug-glk.c
 
-ali-garglk: $(ALI_GLK_OBJECTS) ali.c
+ali-garglk: $(ALI_GLK_OBJECTS) ali.c $(COMMON_LIBS)
 	$(CC) $(CFLAGS) -I../cheapglk -DWITH_GARGLK ali.c -o $@ \
-		$(LDFLAGS) $(ALI_GLK_OBJECTS) -Wl,--subsystem,windows -L../gargoyle -lgarglk
+		$(ALI_GLK_OBJECTS) $(COMMON_LIBS) \
+		$(LDFLAGS) -L../gargoyle -lgarglk
+# TODO: on Windows, add -Wl,--subsystem=windows or -mwindows
 
-ali-glk: $(ALI_GLK_OBJECTS) ali.c
+ali-glk: $(ALI_GLK_OBJECTS) ali.c $(COMMON_LIBS)
 	$(CC) $(CFLAGS) -I../cheapglk -DWITH_GLK ali.c -o $@ \
-		$(LDFLAGS) -rdynamic \
-		$(ALI_GLK_OBJECTS) ../glkloader/libglkloader.a -ldl
+		$(ALI_GLK_OBJECTS) $(COMMON_LIBS) ../glkloader/libglkloader.a \
+		$(LDFLAGS) -rdynamic -ldl
 
 lzma/lzma.a:
 	make -C lzma
 
 clean:
-	rm -f *.o
+	rm -f *.o common.a lzma/lzma.a
 	rm -f grammar.tab.c grammar.tab.h syntax.yy.c
 
 distclean: clean

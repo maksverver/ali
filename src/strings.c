@@ -30,3 +30,4 @@ char *normalize(char *str)
     *q = '\0';
     return str;
 }
+

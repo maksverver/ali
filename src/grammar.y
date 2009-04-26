@@ -28,7 +28,7 @@ int resolve_symbol(const char *str);
 void parse_string(const char *token);
 int resolve_string(void);
 void write_string(void);
-int resolve_fragment(const char *str, int type);
+int resolve_entity(const char *str);
 int resolve_property(const char *str);
 void begin_verb(void);
 void begin_preposition(void);
@@ -187,7 +187,7 @@ outtok          : OUTPUT { parse_string(yytext); };
 varref          : entref ATTRIBUTE { emit(OP_LDI, resolve_property(yytext)); }
                 | GLOBALVAR { emit(OP_LDG, resolve_global(yytext)); }
                 | LOCALVAR { emit(OP_LDL, resolve_local(yytext)); };
-entref          : FRAGMENT { emit(OP_LLI, resolve_fragment(yytext, F_ENTITY)); }
+entref          : FRAGMENT { emit(OP_LLI, resolve_entity(yytext)); }
                 | LSQRBR expression RSQRBR;
 func_call       : IDENTIFIER { begin_call(yytext, 1); }
                   LPAREN arguments RPAREN { end_call(1); };

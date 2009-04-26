@@ -2,6 +2,7 @@
 #include "io.h"
 #include "interpreter.h"
 #include "opcodes.h"
+#include "strings.h"
 #include <string.h>
 
 const Value val_true = 1, val_false = 0, val_nil = -1;
@@ -11,6 +12,10 @@ const Value val_true = 1, val_false = 0, val_nil = -1;
    uses the C stack to invoke functions, so setting this value too high can
    crash the interpreter. */
 #define MAX_STACK_SIZE 1000
+
+/* Limit on the number of words in a command.
+   Useful to keep parsing relatively efficient. */
+#define MAX_COMMAND_WORDS 50
 
 typedef Value (*Builtin)(Interpreter *I, int narg, Value *args);
 
@@ -82,7 +87,25 @@ static void stack_dump(FILE *fp, Array *stack)
 }
 #endif
 
-static bool skip(IOStream *ios, int size)
+static bool eq_word(const char *a, const char *b)
+{
+    while (*a && *b && *a == *b) ++a, ++b;
+    return (*a == '\0' || *a == ' ') && (*b == '\0' || *b == ' ');
+}
+
+unsigned hash_word(const char *str)
+{
+    unsigned h = 2166136261u;
+    while (*str != '\0' && *str != ' ')
+    {
+        h *= 16777619u;
+        h ^= *(unsigned char*)str;
+        ++str;
+    }
+    return h;
+}
+
+static bool skip(IOStream *ios, size_t size)
 {
     while (size-- > 0)
         if (!read_int8(ios, NULL))
@@ -90,139 +113,103 @@ static bool skip(IOStream *ios, int size)
     return true;
 }
 
-static bool read_header(IOStream *ios, Module *mod)
+static size_t pad_chunk_size(size_t chunk_size)
 {
-    int size, version;
+    return chunk_size + (chunk_size&1);
+}
 
-    if (!read_int32(ios, &size) || size < 32)
-        return false;
+/* Reads the next chunk header from the input stream. */
+static bool begin_chunk(IOStream *ios, char *id, size_t *size)
+{
+    int i;
+    if (read_data(ios, id, 4) && read_int32(ios, &i))
+    {
+        *size = i;
+        return true;
+    }
+    return false;
+}
 
+/* Skips data until the start of the next chunk. */
+static bool end_chunk(IOStream *ios, size_t chunk_size)
+{
+    return skip(ios, pad_chunk_size(chunk_size) - chunk_size);
+}
+
+static bool read_header(IOStream *ios, Module *mod, size_t size)
+{
+    int version;
     if (!read_int16(ios, &version))
         return false;
+
     if ((version&0xff00) != 0x0100)
     {
         error("Invalid module file version: %d.%d (expected: 1.x)",
               (version>>8)&0xff, version&0xff);
         return false;
     }
-    return 
+
+    return
         read_int16(ios, NULL) && /* skip reserved data */
-        read_int32(ios, &mod->num_verbs) &&
-        read_int32(ios, &mod->num_prepositions) &&
-        read_int32(ios, &mod->num_entities) &&
-        read_int32(ios, &mod->num_properties) &&
         read_int32(ios, &mod->num_globals) &&
             mod->num_globals >= NUM_BUILTIN_VARS &&
+        read_int32(ios, &mod->num_entities) &&
+        read_int32(ios, &mod->num_properties) &&
         read_int32(ios, &mod->init_func) &&
-        skip(ios, size - 32);
+        skip(ios, size - 20);
 }
 
-static bool read_fragment_table(IOStream *ios, Module *mod)
+static bool read_strings( IOStream *ios, size_t size,
+                          int *nstring, char ***strings, void **string_data )
 {
-    int size, entries, n;
+    int entries, e;
 
-    if (!read_int32(ios, &size) || size < 8)
+    if (size < 4 || !read_int32(ios, &entries) || entries < 0)
         return false;
-    if (!read_int32(ios, &entries) || (size - 8)/8 < entries)
-        return false;
+    size -= 4;
 
     if (entries == 0)
     {
-        mod->nfragment     = 0;
-        mod->fragments     = NULL;
-        mod->fragment_data = NULL;
+        *nstring     = 0;
+        *strings     = NULL;
+        *string_data = NULL;
         return true;
     }
 
-    mod->nfragment     = entries;
-    mod->fragments     = malloc(entries*sizeof(Fragment));
-    mod->fragment_data = malloc(size - (8 + 8*entries));
+    *nstring     = entries;
+    *strings     = malloc(entries*sizeof(char*));
+    *string_data = malloc(size);
 
-    for (n = 0; n < entries; ++n)
+    /* Read zero-terminated string data */
+    if (size == 0 || !read_data(ios, *string_data, size) ||
+        ((char*)*string_data)[size - 1] != '\0')
+        return false;
+
+    char *p = *string_data;
+    for (e = 0; e < entries; ++e)
     {
-        int type, flags, id, offset;
-
-        if (!read_int8(ios, &type) || !read_int24(ios, &id))
-            return false;
-        flags = (type >> 4)&0xf0;
-        type  = (type >> 0)&0x0f;
-        if (id < 0 || id > (type == F_VERB ? mod->num_verbs :
-                            type == F_PREPOSITION ? mod->num_prepositions :
-                            type == F_ENTITY ? mod->num_entities : -1) )
-            return false;
-
-        if (!read_int32(ios, &offset) ||
-            offset < 8 + 8*entries || offset >= size)
-            return false;
-        offset -= 8 + 8*entries;
-
-        mod->fragments[n].type  = type;
-        mod->fragments[n].id    = id;
-        mod->fragments[n].str   = (char*)mod->fragment_data + offset;
-        mod->fragments[n].canon = (flags&1) != 0;
+        if ((size_t)(p - (char*)*string_data) > size)
+            return false;   /* no more string data */
+        (*strings)[e] = p;
+        p += strlen(p) + 1;
     }
-
-    size -= 8 + 8*entries;
-    if (size <= 0)
-        return false;
-    if (!read_data(ios, mod->fragment_data, size))
-        return false;
-    if (((char*)mod->fragment_data)[size - 1] != '\0')
-        return false;
-
     return true;
 }
 
-static bool read_string_table(IOStream *ios, Module *mod)
+static bool read_string_table(IOStream *ios, Module *mod, size_t size)
 {
-    int size, entries, n;
-
-    if (!read_int32(ios, &size) || size < 8)
-        return false;
-    if (!read_int32(ios, &entries) || (size - 8)/4 < entries)
-        return false;
-
-    if (entries == 0)
-    {
-        mod->nstring     = 0;
-        mod->strings     = NULL;
-        mod->string_data = NULL;
-        return true;
-    }
-
-    mod->nstring     = entries;
-    mod->strings     = malloc(entries*sizeof(char*));
-    mod->string_data = malloc(size - (8 + 4*entries));
-
-    for (n = 0; n < entries; ++n)
-    {
-        int offset;
-        if (!read_int32(ios, &offset) ||
-            offset < 8 + 4*entries || offset >= size)
-            return false;
-        mod->strings[n] = (char*)mod->string_data + offset - (8 + 4*entries);
-    }
-
-    size -= 8 + 4*entries;
-    if (size <= 0)
-        return false;
-    if (!read_data(ios, mod->string_data, size))
-        return false;
-    if (((char*)mod->string_data)[size - 1] != '\0')
-        return false;
-
-    return true;
+    return read_strings(ios, size, &mod->nstring, &mod->strings, &mod->string_data);
 }
 
-static bool read_function_table(IOStream *ios, Module *mod)
+static bool read_function_table(IOStream *ios, Module *mod, size_t size)
 {
-    int size, entries, ninstr, n;
+    int entries, ninstr, n;
     Instruction *instrs;
 
-    if (!read_int32(ios, &size) || size < 8 || size%4 != 0)
+    if (size < 4 || size%4 != 0 || !read_int32(ios, &entries) ||
+        entries < 0 || (size - 4)/8 < (size_t)entries)
         return false;
-    if (!read_int32(ios, &entries) || (size - 8)/4 < entries)
-        return false;
+    size -= 4;
 
     if (entries == 0)
     {
@@ -232,7 +219,7 @@ static bool read_function_table(IOStream *ios, Module *mod)
         return true;
     }
 
-    ninstr = (size - (8 + 8*entries))/4;
+    ninstr = (size - 4*entries)/4;
     if (ninstr <= 0)
         return false;
     instrs = malloc(ninstr*sizeof(Instruction));
@@ -243,7 +230,7 @@ static bool read_function_table(IOStream *ios, Module *mod)
 
     for (n = 0; n < entries; ++n)
     {
-        int nret, nparam, offset;
+        int nret, nparam;
 
         if (!read_int16(ios, NULL)) /* skip reserved bytes */
             return false;
@@ -253,18 +240,14 @@ static bool read_function_table(IOStream *ios, Module *mod)
         if (!read_int8(ios, &nparam) || nparam < 0)
             return false;
 
-        if (!read_int32(ios, &offset) ||
-            offset < 8 + 8*entries || offset >= size || offset%4 != 0)
-            return false;
-
         mod->functions[n].id     = n;
         mod->functions[n].ninstr = 0;  /* this is set to a real value below */
         mod->functions[n].nparam = nparam;
         mod->functions[n].nret   = nret;
-        mod->functions[n].instrs = (Instruction*)mod->function_data + (offset - (8 + 8*entries))/4;
     }
 
     /* Read instructions */
+    int start = 0, entry = 0;
     for (n = 0; n < ninstr; ++n)
     {
         int opcode, argument;
@@ -272,150 +255,336 @@ static bool read_function_table(IOStream *ios, Module *mod)
             return false;
         instrs[n].opcode   = opcode;
         instrs[n].argument = argument;
+        if (opcode == 0 && argument == 0)
+        {
+            if (entry >= entries)
+                return false;
+            fflush(stdout);
+            mod->functions[entry].ninstr = n - start;
+            mod->functions[entry].instrs = &instrs[start];
+            entry += 1;
+            start = n + 1;
+        }
     }
 
-    /* Determine out number of instructions in each function */
-    for (n = 0; n < entries; ++n)
+    return entry == entries;
+}
+
+static bool read_word_table(IOStream *ios, Module *mod, size_t size)
+{
+    if (!read_strings(ios, size, &mod->nword, &mod->words, &mod->word_data))
+        return false;
+
+    /* ensure all words are non-empty and in canonical form */
+    int n;
+    for (n = 0; n < mod->nword; ++n)
+        if (normalize(mod->words[n])[0] == '\0')
+            return false;
+
+    /* create hash-table index */
+    mod->word_index_size = 2*mod->nword + 1;  /* FIXME: possible overflow here */
+    mod->word_index      = malloc(sizeof(int)*mod->word_index_size);
+    size_t i;
+    for (i = 0; i < mod->word_index_size; ++i)
+        mod->word_index[i] = -1;
+    for (n = 0; n < mod->nword; ++n)
     {
-        Instruction *i = mod->functions[n].instrs;
-        while (i->opcode != 0 || i->argument != 0)
-            ++i;
-        mod->functions[n].ninstr = i - mod->functions[n].instrs;
+        i = hash_word(mod->words[n])%mod->word_index_size;
+        while (mod->word_index[i] >= 0)
+            if (++i == mod->word_index_size)
+                i = 0;
+        mod->word_index[i] = n;
     }
 
     return true;
 }
 
-static bool read_command_table(IOStream *ios, Module *mod)
+static bool parse_symref(Module *mod, int i, SymbolRef *ref)
 {
-    int size, entries, n;
-
-    if (!read_int32(ios, &size) || size < 8 || size%4 != 0)
-        return false;
-    if (!read_int32(ios, &entries) || (size - 8)/4 < entries)
-        return false;
-
-    if (entries == 0)
+    if (i < 0 && i >= -mod->nword)
     {
-        mod->ncommand     = 0;
-        mod->commands     = NULL;
+        ref->type  = SYM_TERMINAL;
+        ref->index = -1 - i;
         return true;
     }
 
-    assert(mod->commands == NULL);
-    mod->commands = malloc(entries*sizeof(Command));
+    if (i > 0 && i <= mod->nsymbol)
+    {
+        ref->type  = SYM_NONTERMINAL;
+        ref->index = i - 1;
+        return true;
+    }
+
+    return false;
+}
+
+static bool read_grammar_table(IOStream *ios, Module *mod, size_t size)
+{
+    int nnonterm, tot_rules, tot_symrefs;
+    if (size < 12 || size%4 != 0 ||
+        !read_int32(ios, &nnonterm)    || nnonterm    < 0 ||
+        !read_int32(ios, &tot_rules)   || tot_rules   < 0 ||
+        !read_int32(ios, &tot_symrefs) || tot_symrefs < 0)
+        return false;
+    size -= 12;
+    if (size/4 != (size_t)nnonterm + tot_rules + tot_symrefs)  /* FIXME: possible overflow here */
+        return false;
+
+    /* FIXME: this assumes all structs are aligned to similar boundaries. */
+    size_t data_size = sizeof(GrammarRuleSet)*nnonterm +
+                       sizeof(SymbolRefList*)*tot_rules +
+                       sizeof(SymbolRefList)*tot_rules +
+                       sizeof(SymbolRef)*tot_symrefs;
+    char *data = malloc(data_size);
+    if (data == NULL)
+        return false;
+
+    mod->nsymbol      = nnonterm;
+    mod->symbol_rules = (GrammarRuleSet*)data;
+    data += sizeof(GrammarRuleSet)*nnonterm;
+
+    SymbolRefList **ruleptr_data = (SymbolRefList**)data;
+    data += sizeof(SymbolRefList*)*tot_rules;
+
+    SymbolRefList *rule_data = (SymbolRefList*)data;
+    data += sizeof(SymbolRefList)*tot_rules;
+
+    SymbolRef *symref_data = (SymbolRef*)data;
+    data += sizeof(SymbolRef)*tot_symrefs;
+
+    int n, r, s;
+    for (r = 0; r < tot_rules; ++r)
+        ruleptr_data[r] = rule_data + r;
+    for (n = 0; n < nnonterm; ++n)
+    {
+        int nrule;
+        if (!read_int32(ios, &nrule) || nrule < 0 || nrule > tot_rules)
+            return false;
+        mod->symbol_rules[n].sym.type  = SYM_NONTERMINAL;
+        mod->symbol_rules[n].sym.index = n;
+        mod->symbol_rules[n].nrule = nrule;
+        mod->symbol_rules[n].rules = ruleptr_data;
+        ruleptr_data += nrule;
+        tot_rules -= nrule;
+
+        for (r = 0; r < nrule; ++r)
+        {
+            int nref;
+            if (!read_int32(ios, &nref) || nref < 0 || nref > tot_symrefs)
+                return false;
+
+            mod->symbol_rules[n].rules[r]->nref = nref;
+            mod->symbol_rules[n].rules[r]->refs = symref_data;
+            symref_data += nref;
+            tot_symrefs -= nref;
+
+            for (s = 0; s < nref; ++s)
+            {
+                SymbolRef ref;
+                int i;
+                if (!read_int32(ios, &i) || !parse_symref(mod, i, &ref))
+                    return false;
+                if (ref.type == SYM_NONTERMINAL && ref.index >= n)
+                    return false;  /* no recursive rules allowed yet! */
+                mod->symbol_rules[n].rules[r]->refs[s] = ref;
+            }
+        }
+    }
+
+    /* Compute nullability */
+    mod->symbol_nullable = malloc(mod->nsymbol * sizeof(bool));
+    if (mod->symbol_nullable == NULL)
+        return false;
+
+    /* NB: the current algorithm only works because we recursive rules and
+           forward references are forbidden! */
+    for (n = 0; n < mod->nsymbol; ++n)
+    {
+        mod->symbol_nullable[n] = false;
+
+        /* Find a nullable rule */
+        for (r = 0; (size_t)r < mod->symbol_rules[n].nrule; ++r)
+        {
+            for (s = 0; (size_t)s < mod->symbol_rules[n].rules[r]->nref; ++s)
+            {
+                SymbolRef *ref = &mod->symbol_rules[n].rules[r]->refs[s];
+                if (ref->type == SYM_TERMINAL)
+                    goto non_null;
+                assert(ref->type == SYM_NONTERMINAL);
+                if (!mod->symbol_nullable[ref->index])
+                    goto non_null;
+            }
+            mod->symbol_nullable[n] = true;
+            break;
+        non_null:
+            continue;
+        }
+    }
+
+    return true;
+}
+
+static bool read_command_table(IOStream *ios, Module *mod, size_t size)
+{
+    int command_sets;
+    if (size < 4 || !read_int32(ios, &command_sets) || command_sets < 1)
+        return false;
+    size -= 4;
+
+    if (size/4 < (size_t)command_sets)
+        return false;
+
+    /* Parse only first command set for now: */
+    if (size < 4 || !read_int32(ios, &mod->ncommand))
+        return false;
+    size -= 4;
+    if (size/12 < (size_t)mod->ncommand)
+        return false;
+
+    mod->commands = malloc(mod->ncommand * sizeof(Command));
     if (mod->commands == NULL)
         return false;
-    mod->ncommand = entries;
 
-    int offset = 8;
-    for (n = 0; n < entries; ++n)
+    int n;
+    for (n = 0; n < mod->ncommand; ++n)
     {
-        if (offset + 4 > size)
+        int i;
+        if (!read_int32(ios, &i) ||
+            !parse_symref(mod, i, &mod->commands[n].symbol) ||
+            !read_int32(ios, &mod->commands[n].guard) ||
+            !read_int32(ios, &mod->commands[n].function))
             return false;
-        offset += 4;
-
-        int form, narg;
-        if (!read_int16(ios, &form) || !read_int16(ios, &narg))
-            return false;
-
-        if (offset + 4*narg + 8 > size)
-            return false;
-        offset += 4*narg + 8;
-
-        if ( (form == 0 && narg != 1) ||
-             (form == 1 && narg != 2) ||
-             (form == 2 && narg != 4) )
-        {
-            return false;
-        }
-
-        int part0 = -1, part1 = -1, part2 = -1, part3 = -1, guard, function;
-        if ((narg > 0 && !read_int32(ios, &part0)) ||
-            (narg > 1 && !read_int32(ios, &part1)) ||
-            (narg > 2 && !read_int32(ios, &part2)) ||
-            (narg > 3 && !read_int32(ios, &part3)) ||
-            !read_int32(ios, &guard) || !read_int32(ios, &function))
-        {
-            return false;
-        }
-        mod->commands[n].form    = form;
-        mod->commands[n].part[0] = part0;
-        mod->commands[n].part[1] = part1;
-        mod->commands[n].part[2] = part2;
-        mod->commands[n].part[3] = part3;
-        mod->commands[n].guard    = guard;
-        mod->commands[n].function = function;
     }
-    return offset == size;
+    return true;
 }
 
 void free_module(Module *mod)
 {
-    free(mod->fragments);
-    mod->fragments = NULL;
-    free(mod->fragment_data);
-    mod->fragment_data = NULL;
+    /* Free string table */
     free(mod->strings);
     mod->strings = NULL;
     free(mod->string_data);
     mod->string_data = NULL;
+
+    /* Function table */
     free(mod->functions);
     mod->functions = NULL;
     free(mod->function_data);
     mod->function_data = NULL;
+
+    /* Free word table */
+    free(mod->words);
+    mod->words = NULL;
+    free(mod->word_data);
+    mod->word_data = NULL;
+    free(mod->word_index);
+    mod->word_index = NULL;
+
+    /* Free grammar table */
+    free(mod->symbol_rules);
+    mod->symbol_rules = NULL;
+    free(mod->symbol_nullable);
+    mod->symbol_nullable = NULL;
+
+    /* Free command table */
     free(mod->commands);
     mod->commands = NULL;
-    free(mod);
 }
 
 Module *load_module(IOStream *ios)
 {
     Module *mod = malloc(sizeof(Module));
-    int sig;
-
+    if (mod == NULL)
+        return NULL;
     memset(mod, 0, sizeof(Module));
 
-    if (!read_int32(ios, &sig))
-    {
-        error("Unable to read from module file.");
-        goto failed;
-    }
+    const char *chunk_types[7] = {
+        "FORM", "MOD ", "STR ", "FUN ", "WRD ", "GRM ", "CMD " };
 
-    if (sig != 0x616c696f)
+    int chunk;
+    for (chunk = 0; chunk < 7; ++chunk)
     {
-        error("Module file has incorrect signature.");
-        goto failed;
-    }
+        char chunk_type[4];
+        size_t chunk_size;
 
-    if (!read_header(ios, mod))
-    {
-        error("Failed to load module header.");
-        goto failed;
-    }
+        if (!begin_chunk(ios, chunk_type, &chunk_size))
+        {
+            error("Unable to read chunk header.");
+            goto failed;
+        }
 
-    if (!read_fragment_table(ios, mod))
-    {
-        error("Failed to read module fragment table.");
-        goto failed;
-    }
+        if (memcmp(chunk_type, chunk_types[chunk], 4) != 0)
+        {
+            error("Expected %.4s chunk!", chunk_types[chunk]);
+            goto failed;
+        }
 
-    if (!read_string_table(ios, mod))
-    {
-        error("Failed to read module string table.");
-        goto failed;
-    }
+        switch (chunk)
+        {
+        case 0: /* FORM */
+            {
+                char id[4];
+                if (!read_data(ios, id, 4) || memcmp(id, "ALI ", 4) != 0)
+                {
+                    error("Unsupported FORM type (%.4s); expected ALI.", id);
+                    goto failed;
+                }
+            } break;
 
-    if (!read_function_table(ios, mod))
-    {
-        error("Failed to read module function table.");
-        goto failed;
-    }
+        case 1: /* MOD  */
+            if (!read_header(ios, mod, chunk_size))
+            {
+                error("Failed to load module header.");
+                goto failed;
+            }
+            break;
 
-    if (!read_command_table(ios, mod))
-    {
-        error("Failed to read module command table.");
-        goto failed;
+        case 2: /* STR  */
+            if (!read_string_table(ios, mod, chunk_size))
+            {
+                error("Failed to read module string table.");
+                goto failed;
+            }
+            break;
+
+        case 3: /* FUN  */
+            if (!read_function_table(ios, mod, chunk_size))
+            {
+                error("Failed to read module function table.");
+                goto failed;
+            }
+            break;
+
+        case 4: /* WRD  */
+            if (!read_word_table(ios, mod, chunk_size))
+            {
+                error("Failed to read module word table.");
+                goto failed;
+            }
+            break;
+
+        case 5: /* GRM  */
+            if (!read_grammar_table(ios, mod, chunk_size))
+            {
+                error("Failed to read module grammar table.");
+                goto failed;
+            }
+            break;
+
+        case 6: /* CMD  */
+            if (!read_command_table(ios, mod, chunk_size))
+            {
+                error("Failed to read module command table.");
+                goto failed;
+            }
+            break;
+        }
+
+        if (!end_chunk(ios, chunk_size))
+        {
+            error("Unable to read chunk footer.");
+            goto failed;
+        }
     }
 
     return mod;
@@ -889,97 +1058,6 @@ static Value builtin_reset(Interpreter *I, int narg, Value *args)
     return val_nil;
 }
 
-/* Returns the index of a fragment of a matching fragment. */
-static int find_fragment(const Module *mod, const char *text, FragmentType type)
-{
-    /* Binary search for a matching fragment in range [lo,hi) */
-    int lo = 0, hi = mod->nfragment;
-    while (lo < hi)
-    {
-        int mid = lo + (hi - lo)/2;
-
-        int d = strcmp(mod->fragments[mid].str, text);
-        if (d == 0)
-            d = mod->fragments[mid].type - type;
-
-        if (d < 0)
-            lo = mid + 1;
-        else
-        if (d > 0)
-            hi = mid;
-        else
-            return mod->fragments[mid].id;  /* found */
-    }
-    return -1;  /* not found */
-}
-
-static bool parse_command(const Module *mod, char *line, Command *cmd)
-{
-    int verb, ent1, prep, ent2;
-    char *eol, *p, *q, *r;
-
-    /* Find end of line */
-    eol = line;
-    while (*eol != '\0') ++eol;
-
-    if ((verb = find_fragment(mod, line, F_VERB)) >= 0)
-    {
-        cmd->form = 0;
-        cmd->part[0] = verb;
-        cmd->part[1] = -1;
-        cmd->part[2] = -1;
-        cmd->part[3] = -1;
-        return true;
-    }
-
-    /* Split string at `p' */
-    for (p = eol; p >= line; --p)
-    {
-        if (*p != ' ') continue;
-        *p = '\0';
-        if ((verb = find_fragment(mod, line, F_VERB)) >= 0)
-        {
-            if ((ent1 = find_fragment(mod, p + 1, F_ENTITY)) >= 0)
-            {
-                cmd->form = 1;
-                cmd->part[0] = verb;
-                cmd->part[1] = ent1;
-                cmd->part[2] = -1;
-                cmd->part[3] = -1;
-                return true;
-            }
-
-            for (q = eol; q >= p; --q)
-            {
-                if (*q != ' ') continue;
-                *q = '\0';
-                if ((ent1 = find_fragment(mod, p + 1, F_ENTITY)) >= 0)
-                {
-                    for (r = eol; r >= q; --r)
-                    {
-                        if (*r != ' ') continue;
-                        *r = '\0';
-                        if (((prep = find_fragment(mod, q + 1, F_PREPOSITION)) >= 0) &&
-                            ((ent2 = find_fragment(mod, r + 1, F_ENTITY)) >= 0))
-                        {
-                            cmd->form = 2;
-                            cmd->part[0] = verb;
-                            cmd->part[1] = ent1;
-                            cmd->part[2] = prep;
-                            cmd->part[3] = ent2;
-                            return true;
-                        }
-                        *r = ' ';
-                    }
-                }
-                *q= ' ';
-            }
-        }
-        *p = ' ';
-    }
-    return false;
-}
-
 static bool evaluate_function(Interpreter *I, int func)
 {
     if (func < 0 || func >= I->mod->nfunction)
@@ -992,60 +1070,62 @@ static bool evaluate_function(Interpreter *I, int func)
     return VAL_TO_BOOL(val);
 }
 
-static int cmp_commands(const Command *c, const Command *d)
+/* Match the first word of the given line, and return an index into the word
+   table if found, or -1 if not found. */
+static int match_word(Module *mod, const char *line)
 {
-    if (c->form    - d->form    != 0) return c->form    - d->form;
-    if (c->part[0] - d->part[0] != 0) return c->part[0] - d->part[0];
-    if (c->part[1] - d->part[1] != 0) return c->part[1] - d->part[1];
-    if (c->part[2] - d->part[2] != 0) return c->part[2] - d->part[2];
-    if (c->part[3] - d->part[3] != 0) return c->part[3] - d->part[3];
-    return 0;
-}
-
-/* Returns the index of the first command that is not less than `cmd' according
-   to cmp_command() defined above, or mod->ncommand if none is found. This
-   means that the caller should check that the result is less than mod->ncommand
-   and that cmp_commands(mod->commands[result], cmd) == 0, to ensure that a
-   matching element was foud. */
-static int find_first_matching_command(const Module *mod, const Command *cmd)
-{
-    /* Binary search for command in range [lo,hi) */
-    int lo = 0, hi = mod->ncommand;
-    while (lo < hi)
+    size_t i = hash_word(line)%mod->word_index_size;
+    while (mod->word_index[i] >= 0)
     {
-        int mid = lo + (hi - lo)/2;
-        if (cmp_commands(&mod->commands[mid], cmd) < 0)
-            lo = mid + 1;
-        else
-            hi = mid;
+        if (eq_word(line, mod->words[mod->word_index[i]]))
+            return mod->word_index[i];
+        if (++i == mod->word_index_size)
+            i = 0;
     }
-    return lo;
+    return -1;
 }
 
 void process_command(Interpreter *I, char *line)
 {
     AR_clear(I->output);
 
-    Command cmd;
-    if (!parse_command(I->mod, line, &cmd))
+    /* Tokenize command string, into a list of indices into the word table. */
+    int words[MAX_COMMAND_WORDS], nword = 0;
+    const char *pos;
+    for (pos = line; *pos != '\0'; )
     {
-        write_str(I, "I didn't understand that.\n");
-        return;
+        if (nword == MAX_COMMAND_WORDS)
+        {
+            write_str(I, "Too many words in command!\n");
+            return;
+        }
+        int i = match_word(I->mod, pos);
+        if (i < 0)
+        {
+            write_str(I, "Unknown word: ");
+            while (*pos != '\0' && *pos != ' ')
+                write_ch(I, *pos++);
+            return;
+        }
+        while (*pos != ' ' && *pos != '\0') ++pos;
+        if (*pos != '\0') ++pos;
+        words[nword++] = i;
     }
 
-    int num_matched = 0, num_active = 0, n, cmd_func = -1;
-    for (n = find_first_matching_command(I->mod, &cmd);
-         n < I->mod->ncommand; ++n)
+    /* Find matching commands. */
+    const GrammarRuleSet *grammar = I->mod->symbol_rules;
+    int num_matched = 0, num_active = 0, cmd_func = -1, n;
+    for (n = 0; n < I->mod->ncommand; ++n)
     {
         const Command *command = &I->mod->commands[n];
-        if (cmp_commands(command, &cmd) != 0)
-            break;
-
-        ++num_matched;
-        if (command->guard < 0 || evaluate_function(I, command->guard))
+        if (parse_dumb(grammar, words, nword, &command->symbol))
         {
-            if (++num_active == 1)
-                cmd_func = command->function;
+            ++num_matched;
+            if (command->guard < 0 || evaluate_function(I, command->guard))
+            {
+                if (++num_active == 1)
+                    cmd_func = command->function;
+            }
         }
     }
 
@@ -1061,7 +1141,7 @@ void process_command(Interpreter *I, char *line)
         return;
     }
 
-    if (num_active  > 1)
+    if (num_active > 1)
     {
         write_str(I, "That command is ambiguous.\n");
         return;

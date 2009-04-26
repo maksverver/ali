@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include "Array.h"
+#include "parser.h"
 
 typedef struct Instruction
 {
@@ -17,25 +18,12 @@ typedef struct Function
     Instruction *instrs;
 } Function;
 
-
 typedef struct Command
 {
-    int form, part[4], guard, function;
+    SymbolRef   symbol;
+    int         guard;
+    int         function;
 } Command;
-
-
-typedef enum FragmentType {
-    F_VERB = 0, F_PREPOSITION = 1, F_ENTITY = 2
-} FragmentType;
-
-
-typedef struct Fragment
-{
-    FragmentType type;
-    int          id;
-    const char   *str;
-    bool         canon;
-} Fragment;
 
 
 /* Values */
@@ -53,30 +41,35 @@ extern const char * const builtin_func_names[NUM_BUILTIN_FUNCS + 1];
 extern const char * const builtin_var_names[NUM_BUILTIN_VARS + 1];
 enum builtin_var_ids { var_title, var_subtitle };
 
-
 typedef struct Module
 {
-    int num_verbs, num_prepositions, num_entities,
-        num_properties, num_globals, init_func;
-
-    /* Fragment table */
-    int nfragment;
-    Fragment *fragments;
-    void *fragment_data;
+    int num_entities, num_properties, num_globals, init_func;
 
     /* String table */
-    int nstring;
-    char **strings;
-    void *string_data;
+    int             nstring;
+    char            **strings;
+    void            *string_data;
 
     /* Function table */
-    int nfunction;
-    Function *functions;
-    void **function_data;
+    int             nfunction;
+    Function        *functions;
+    void            **function_data;
+
+    /* Word table */
+    int             nword;
+    char            **words;
+    void            *word_data;
+    int             *word_index;       /* closed hash table of word indices */
+    size_t          word_index_size;   /* size of hash table */
+
+    /* Grammar table */
+    int             nsymbol;
+    GrammarRuleSet  *symbol_rules;
+    bool            *symbol_nullable;
 
     /* Command table */
-    int ncommand;
-    Command *commands;
+    int             ncommand;
+    Command         *commands;
 
 } Module;
 
@@ -96,7 +89,6 @@ typedef struct Callbacks
     void (*pause)(struct Interpreter *I);
 } Callbacks;
 
-
 typedef struct Interpreter
 {
     Module      *mod;           /* loaded with load_module() */
@@ -106,6 +98,7 @@ typedef struct Interpreter
     Callbacks   *callbacks;     /* optional callback functions */
     void        *aux;           /* auxiliary data (useful for callbacks) */
 } Interpreter;
+
 
 /* Module loding */
 struct IOStream;

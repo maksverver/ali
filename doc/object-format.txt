@@ -1,70 +1,94 @@
-Integers are stored in network byte order (most-significant byte first).
+New file format is based on IFF.
 
-Length 
-  4   61 6C 69 6F   File identifier "alio"
+All integers are stored in network byte order (most-significant byte first).
+(TODO: determine signedness?)
 
-Module header
-  4   00 00 00 20   Header size
+Each chunk starts with a four character identifier, followed by the chunk size
+excluding the 8 bytes for the identifier and chunk size and padding. Every chunk
+is padded with zero-bytes to a 2-byte boundary.
+
+All chunks are mandatory and must occur in the order specified.
+
+
+ Len  Contents      Description
+ ---  -----------   ----------------------------------------------------------
+
+IFF header:
+  4   46 4F 52 4D   "FORM"
+  4   xx xx xx xx   Form chunk size (file size - 8)
+  4   41 4C 49 20   "ALI "
+
+Module Header
+  4   4D 4F 44 20   "MOD "
+  4   00 00 00 18   Chunk size (20 bytes)
   2   01 00         version number (1.0)
   2   00 00         reserved (00 00)
-  4   xx xx xx xx   Number of verbs
-  4   xx xx xx xx   Number of prepositions
+  4   xx xx xx xx   Number of global variables
   4   xx xx xx xx   Number of entities
   4   xx xx xx xx   Number of properties per entity
-  4   xx xx xx xx   Number of global variables
   4   xx xx xx xx   Initialization function (index into function table, or -1)
 
-Fragment table
-  4   xx xx xx xx   Fragment table size (S)
-  4   xx xx xx xx   Number of entries (E)
-  For each fragment:
-  4   FT II II II    F: flags: 1 for canonical form
-                     T: type referenced (0: verb, 1: preposition, 2: entity)
-                    II: index of referenced type
-  4   xx xx xx xx   Offset relative to start of fragment table
-                    Offset must be in range [8 + 8*E, S)
-  N                 ASCII encoded string data; strings are seperated by zero.
-  Fragments must be ordered by string data first, then by type, then by id.
-  Fragment table must end with a zero byte and be padded to a 4-byte boundary.
-
 String table
-  4   xx xx xx xx   String table size (S)
-  4   xx xx xx xx   Number of entries (E)
-  For each entry:
-  4   xx xx xx xx   Offset relative to start of string table
-                    Offset must be in range [8 + 4*E, S)
-  N                 UTF-8 encoded string data; strings are seperated by zero.
-  String table must end with a zero byte and is padded to a 4-byte boundary.
+  4   53 54 52 20   "STR "
+  4   xx xx xx xx   String table size (excluding padding)
+  4   xx xx xx xx   Number of entries
+  For each string (of L bytes in UTF-8 encoding):
+  X   xx            UTF-8 encoded string data;
+  1   00            terminator
+  End of string
+ 0-1  00            padding to 2-byte boundary
 
 Function table
+  4   46 55 4E 20   "FUN "
   4   xx xx xx xx   Function table size (S)
   4   xx xx xx xx   Number of function entries (E)
   For each function:
-  4   00 00 RR AA   Number of arguments (A<128) and return values (R)
-                    A and R must be in range [0, 128)
-  4   xx xx xx xx   Offset relative to start of function table
-                    Offset must be in range [8 + 8*E, S)
-  Then:
-                    32-bit encoded instructions
-                    Blocks are seperated by null-instructions (00 00 00 00)
-  For each instruction:
-  4   oo aa aa aa   Instruction with opcode "oo" and argument "aa".
-  Then:
-  4   00 00 00 00
+  4   00 00 RR AA   Number of arguments (A<128) and return values.
+  End of function
+  Then for each function (with X instructions):
+  X   oo aa aa aa   Instruction with opcode "oo" and argument "aa".
+  4   00 00 00 00   (function terminator)
+  End of function
+
+Word table
+  4   57 52 44 20   "WRD "
+  4   xx xx xx xx   Word table size (S) (excluding padding)
+  4   xx xx xx xx   Number of entries (W)
+  For each word (of L bytes):
+  L   xx            printable ASCII encoded characters
+  1   00            terminator
+  End of word
+ 0-1  00            padding to 2-byte boundary
+  All words must be non-empty strings.
+
+Grammar table
+  4   47 52 4D 20   "GRM "
+  4   xx xx xx xx   Grammar table size
+  4   xx xx xx xx   Number of non-terminal symbols, N
+  4   xx xx xx xx   Total number of rules, R
+  4   xx xx xx xx   Total number of symbol references in rules, S
+  For each non-terminal symbol: (e.g. X)
+  4   xx xx xx xx   Number of rules with this symbol on the left-hand side
+  For each rule: (e.g., X -> A B C D)
+  4   xx xx xx xx   Number of symbols on the right-hand side
+  For each symbol:
+  4   xx xx xx xx   Symbol reference; [+1..N] for non-terminals and [-1..-W]
+                    for terminals.
+  End of symbols
+  End of rules
+  End of symbol
+
+  Currently, recursive rules or forward references are not allowed!
 
 Command table
+  4   43 4D 44 20   "CMD "
   4   xx xx xx xx   Command table size (S)
-  4   xx xx xx xx   Number of command entries (E)
+  4   xx xx xx xx   Number of command sets
+  For each command set:
+  4   xx xx xx xx   Number of commands
+  End of command set
   For each command:
-  4   FF FF AA AA   Form (F) and number of arguments (A).
-                    The following forms/arguments are supported:
-                    Form    Arguments
-                    ----    ---------
-                    0       1: Verb
-                    1       2: Verb Entity
-                    2       4: Verb Entity Preposition Entity
-  4*A xx xx xx xx   Reference to verb/preposition/entity
-  4   xx xx xx xx   Guard (index into function table, or -1)
+  4   xx xx xx xx   Start symbol reference (same format as in grammar table)
+  4   xx xx xx xx   Guard (index into function table, or -1 if no guard)
   4   xx xx xx xx   Body (index into function table)
-  Commands must be ordered by form first, and lexicographically by arguments
-  second.
+  End of command

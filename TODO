@@ -2,54 +2,10 @@ Most Important Item: write an actual game!
 
  - TODO: move builtin variables, so these variables can be added in the 
          interpreter without breaking compatibility with existing modules.
-         (use negative indices, just as with functions)
+         (use negative indices, just as with functions?)
 
- - more general parsing table (so interpreter becomes simpler)
-
-    Proposed new command table structure:
-        (fragment table is modified to contain whole words only)
-
-        for each command context:
-            reference to prompt string (index into string table)
-
-            number of commands
-
-            (command list)
-            for each command:
-                guard function
-                body function
-
-            number of parser states
-
-            (state list)
-            for each state:
-                first transition (index into transition list)
-                (last transition is given as first transition of next state,
-                 or number-of-transitions for the last entry)
-
-            number of transitions
-
-            (transition list)
-            for each transition: (ordered by old state)
-                fragment id
-                new state
-
-            (state/command mapping)
-            for each state:
-                first command (index into command list)
-                (last command is given as first command of next state,
-                 or number-of-commands for the last entry)
-
-            number of commands
-
-            (command list)
-            for each command:
-                guard (reference into function table, or nil)
-                body  (reference into function table)
-
-            How space efficient is this? How easy is this to implement?
-            What are the alternatives?
-
+ - later: better parser (Ea
+ 
 
  - later: support multiple parsing contexts, with different prompts, and a
           way to swap between them. This allows easier implementation of
@@ -71,7 +27,10 @@ Most Important Item: write an actual game!
 
 alic:
  - (maybe later:) support for forward declarations of functions/procedures?
- - remove duplicates from fragment lists generated from fragment patterns.
+ - generate more compact grammar (specifically, generate rules with more than
+   two symbols on the RHS whenever useful).
+ - attempt to re-use existing function/procedures.
+   mostly useful when different commands have the same guard (e.g. @loc = :x)
 
 ali:
  - BUG: the interpreter will hang on (nearly) infinite loops

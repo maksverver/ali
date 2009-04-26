@@ -1,3 +1,5 @@
+/* TODO: clean up and document! */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,21 +17,21 @@ extern int lineno;
 int yyparse();
 
 /* Data structure used to represent a parsed fragment pattern */
-typedef struct PatternNode
-{
-    enum { PN_FRAG, PN_SEQ, PN_ALT, PN_OPT } type;
-    char *text;
-    struct PatternNode *left, *right;
-} PatternNode;
+typedef enum PatternNodeType {
+    PN_FRAG, PN_SEQ, PN_ALT, PN_OPT, PN_WORD
+} PatternNodeType;
 
-/* Data structure used to represent a list of fragments
-   (used when generating fragments from a fragment pattern) */
-typedef struct FragmentList
+typedef struct PatternNode PatternNode;
+struct PatternNode
 {
-    struct FragmentList *next;
-    char *text;
-} FragmentList ;
+    PatternNodeType type;
+    char            *text;
+    PatternNode     *left, *right;
+};
 
+
+/* Removes occurences of FRAG and OPT from pattern node */
+PatternNode *pattern_normalize(PatternNode *node);
 
 /* Default path */
 const char *output_path = "module.alo";
@@ -56,13 +58,25 @@ static int next_symbol_id = -1;  /* symbols are numbered -1, -2, etc. */
 static ScapegoatTree st_symbols = ST_INIT(
     (EA_cmp)strcmp, (EA_dup)strdup, (EA_free)free, EA_no_dup, EA_no_free );
 
-/* Fragment table */
-static Array ar_fragments = AR_INIT(sizeof(Fragment));
-static ScapegoatTree st_fragments = ST_INIT(
-    (EA_cmp)strcmp, (EA_dup)strdup, (EA_free)free, EA_no_dup, EA_no_free );
+/* OLD: Used when parsing a fragment definition: (TODO: to be removed) */
+typedef enum FragmentType {
+    F_VERB = 0, F_PREPOSITION = 1, F_ENTITY = 2
+} FragmentType;
 
-/* Used when parsing a fragment definition: */
+typedef struct Fragment
+{
+    FragmentType type;
+    int          id;
+    const char   *str;
+    bool         canon;
+} Fragment;
+
 static Fragment fragment;
+
+/* Patterns used to refer to verbs/prepositions/entities */
+static Array ar_verbs   = AR_INIT(sizeof(PatternNode*));
+static Array ar_preps   = AR_INIT(sizeof(PatternNode*));
+static Array ar_ents    = AR_INIT(sizeof(PatternNode*));
 
 /* Function table */
 static Array ar_functions = AR_INIT(sizeof(Function));
@@ -71,6 +85,18 @@ static ScapegoatTree st_functions = ST_INIT(
 
 /* Command table */
 static Array ar_commands = AR_INIT(sizeof(Command));
+
+/* Word table; similar to string table, but contains words recognized by the
+   parser instead of strings used in the code. */
+static Array ar_words = AR_INIT(sizeof(char*));
+/* TODO: later add ScapegoatTree to lookup words faster? */
+
+/* Grammar rules.
+   NB: rules must be stored in increasing order of left-hand-side nonterminal.
+*/
+static Array ar_grammar = AR_INIT(sizeof(GrammarRuleSet*));
+/* TODO: later add ScapegoatTree to look op rules/rulesets faster? */
+
 
 /* Used when parsing a function definition: */
 static char *func_name = NULL;
@@ -98,6 +124,41 @@ int yywrap()
 {
     return 1;
 }
+
+
+PatternNode *make_pattern_node(int type, const char *text,
+                               PatternNode *left, PatternNode *right)
+{
+    PatternNode *node = malloc(sizeof(PatternNode));
+    assert(node != NULL);
+    node->type = type;
+    node->text = (text == NULL) ? NULL : strdup(text);
+    node->left = left;
+    node->right = right;
+    return node;
+}
+
+PatternNode *clone_pattern_node(PatternNode *node)
+{
+    if (node == NULL)
+        return NULL;
+
+    return make_pattern_node( node->type, node->text,
+                              clone_pattern_node(node->left),
+                              clone_pattern_node(node->right) );
+}
+
+void free_pattern_node(PatternNode *node)
+{
+    if (node != NULL)
+    {
+        free_pattern_node(node->left);
+        free_pattern_node(node->right);
+        free(node->text);
+        free(node);
+    }
+}
+
 
 /* Emit an instruction (by adding it to the current function body) */
 void emit(int opcode, int arg)
@@ -359,123 +420,357 @@ void end_function()
     func_nlocal = 0;
 }
 
-/* Parses a <preposition> <entity> sequence. */
-static bool parse_command3(char *str, Command *command)
+void begin_verb()
 {
-    const void *f_idx, *g_idx;
-    const Fragment *f, *g;
-    char *sep;
-    bool ok;
+    fragment.type  = F_VERB;
+    fragment.id    = num_verbs++;
+    fragment.canon = true;
+}
 
-    sep = str;
-    while (*sep) ++sep;
+void begin_preposition()
+{
+    fragment.type  = F_PREPOSITION;
+    fragment.id    = num_prepositions++;
+    fragment.canon = true;
+}
 
-    for (;;)
+void begin_entity()
+{
+    fragment.type  = F_ENTITY;
+    fragment.id    = num_entities++;
+    fragment.canon = true;
+}
+
+void add_synonym(PatternNode *node)
+{
+    node = pattern_normalize(node);
+    assert(node != NULL);
+
+    Array *ar;
+    switch (fragment.type)
     {
-        do --sep; while (sep > str && *sep != ' ');
-        if (sep <= str) break;
+    case F_VERB:
+        ar = &ar_verbs;
+        break;
 
-        *sep = '\0';
-        ok = ST_find(&st_fragments, str, &f_idx) &&
-             (f = AR_at(&ar_fragments, (long)f_idx))->type == F_PREPOSITION &&
-             ST_find(&st_fragments, sep + 1, &g_idx) &&
-             (g = AR_at(&ar_fragments, (long)g_idx))->type == F_ENTITY;
-        *sep = ' ';
+    case F_PREPOSITION:
+        ar = &ar_preps;
+        break;
 
-        if (ok)
-        {
-            /* FORM 2: <verb> <entity> <preposition> <entity> */
-            command->form = 2;
-            command->part[2] = f->id;
-            command->part[3] = g->id;
-            return true;
-        }
-        *sep = ' ';
+    case F_ENTITY:
+        ar = &ar_ents;
+        break;
+
+    default:
+        fatal("invalid fragment type");
+        break;
     }
 
+    if (fragment.canon)
+    {
+        AR_append(ar, &node);
+        fragment.canon = false;
+    }
+    else
+    {
+        PatternNode **prev = AR_last(ar);
+        node = make_pattern_node(PN_ALT, NULL, *prev, node);
+        assert(node != NULL);
+        *prev = node;
+    }
+}
+
+/* Returns true if `text' starts with `word'; i.e. if `text' is equal to `word',
+   or starts with `word' followed by a space character. */
+static bool starts_with(const char *text, const char *word)
+{
+    while (*word != '\0' && *text != '\0' && *word == *text) ++word, ++text;
+    return *word == '\0' && (*text == '\0' || *text == ' ');
+}
+
+/* Skip a word, and return a pointer to the start of the next word, or the
+   end of the string if `text' contains a single word (or is empty). */
+static const char *skip_word(const char *text)
+{
+    assert(text != NULL);
+    const char *k = text;
+    while (*k && *k != ' ') ++k;
+    while (*k == ' ') ++k;
+    return k;
+}
+
+bool match_pattern(PatternNode *node, const char *i, const char *j)
+{
+    assert(node != NULL);
+    switch (node->type)
+    {
+    case PN_WORD:
+        if (starts_with(i, node->text))
+        {
+            return skip_word(i) == j;
+        }
+        return false;
+
+    case PN_SEQ:
+        {
+            const char *k = i;
+            for (;;)
+            {
+                if (match_pattern(node->left,  i, k) &&
+                    match_pattern(node->right, k, j))
+                {
+                    return true;
+                }
+                if (*k == '\0') break;
+                k = skip_word(k);
+            }
+        } break;
+
+    case PN_ALT:
+        return match_pattern(node->left,  i, j) ||
+               match_pattern(node->right, i, j);
+
+    case PN_OPT:
+        return i == j || match_pattern(node->left, i, j);
+
+    default:
+        assert(false);
+    }
     return false;
 }
 
-/* Parses the part after "verb" in a command.
-   This either an entity reference, or an entity/preposition/reference. */
-static bool parse_command2(char *str, Command *command)
+/* Return index of a pattern that matches fragment */
+int find_fragment(Array *ar_patterns, const char *i, const char *j)
 {
-    const void *f_idx;
-    Fragment *f;
-    char *sep;
-    bool ok;
+    PatternNode **patterns = AR_data(ar_patterns);
+    size_t npattern = AR_size(ar_patterns), n;
+    int res = -1;
 
-    if (ST_find(&st_fragments, str, &f_idx) &&
-        (f = AR_at(&ar_fragments, (long)f_idx))->type == F_ENTITY)
+    for (n = 0; n < npattern; ++n)
     {
-        /* FORM 1: <verb> <entity> */
-        command->form = 1;
-        command->part[1] = f->id;
-        command->part[2] = -1;
-        command->part[3] = -1;
-        return true;
+        if (!match_pattern(patterns[n], i, j))
+            continue;
+        if (res != -1)
+            return -2;
+        res = n;
     }
 
-    sep = str;
-    while (*sep) ++sep;
-    for (;;)
-    {
-        do --sep; while (sep > str && *sep != ' ');
-        if (sep <= str) break;
+    if (res == -1)
+        return -1;
 
-        *sep = '\0';
-        ok = ST_find(&st_fragments, str, &f_idx) &&
-             (f = AR_at(&ar_fragments, (long)f_idx))->type == F_ENTITY &&
-             parse_command3(sep + 1, command);
-        *sep = ' ';
-
-        if (ok)
-        {
-            command->part[1] = f->id;
-            return true;
-        }
-    }
-
-    return false;
+    return res;
 }
 
-static bool parse_command(char *str, Command *command)
+/* Resolve fragment token given by string [i:j) of type `type'.
+   Returns -1 if not match found, -2 for multiple matches, >= 0 otherwise. */
+int resolve_fragment(int type, const char *i, const char *j)
 {
+/*
     const void *f_idx;
     const Fragment *f;
-    char *sep;
-    bool ok;
-
-    if (ST_find(&st_fragments, str, &f_idx) &&
-        (f = AR_at(&ar_fragments, (long)f_idx))->type == F_VERB)
+    char *str = strdup(token);
+    normalize(str);
+    if (!ST_find(&st_fragments, str, &f_idx))
     {
-        /* FORM 0: <verb> */
-        command->form = 0;
-        command->part[0] = f->id;
-        command->part[1] = -1;
-        command->part[2] = -1;
-        command->part[3] = -1;
+        fatal("Reference to undeclared fragment \"%s\" on line %d.",
+            str, lineno + 1);
+    }
+    free(str);
+    f = AR_at(&ar_fragments, (long)f_idx);
+    if (type != -1 && type != (int)f->type)
+    {
+        fatal("Fragment referenced by \"%s\" has wrong type on line %d.",
+            str, lineno + 1);
+    }
+    return f->id;
+*/
+    switch (type)
+    {
+    case F_VERB:
+        return find_fragment(&ar_verbs, i, j);
+
+    case F_PREPOSITION:
+        return find_fragment(&ar_preps, i, j);
+
+    case F_ENTITY:
+        return find_fragment(&ar_ents, i, j);
+
+    default:
+        fatal("invalid fragment type");
+        return -1;
+    }
+}
+
+int resolve_entity(const char *text)
+{
+    int res = resolve_fragment(F_ENTITY, text, text + strlen(text));
+    if (res == -1)
+        fatal("Couldn't match fragment \"%s\" on line %d.", text, lineno + 1);
+    if (res == -2)
+        fatal("Ambiguous fragment \"%s\" on line %d.", text, lineno + 1);
+    assert(res >= 0);
+    return res;
+}
+
+SymbolRef pattern_to_grammar(PatternNode *node)
+{
+    GrammarRuleSet *ruleset;
+
+    switch (node->type)
+    {
+    case PN_WORD:
+        {
+            int nwords = (int)AR_size(&ar_words);
+            const char **words = AR_data(&ar_words);
+
+            /* Try to find an existing equal terminal symbol */
+            SymbolRef res = { SYM_TERMINAL, 0 };
+            for (res.index = 0; res.index < nwords; ++res.index)
+                if (strcmp(words[res.index], node->text) == 0)
+                    break;
+
+            /* Add a new terminal symbol if none existed. */
+            if (res.index == nwords)
+            {
+                char *str = strdup(node->text);
+                AR_push(&ar_words, &str);
+            }
+
+            return res;
+        }
+
+    case PN_SEQ:
+        {
+            ruleset = ruleset_create(1);
+            assert(ruleset != NULL);
+            ruleset->rules[0] = symrefs_create(2);
+            assert(ruleset->rules[0] != NULL);
+            ruleset->rules[0]->refs[0] = pattern_to_grammar(node->left);
+            ruleset->rules[0]->refs[1] = pattern_to_grammar(node->right);
+        } break;
+
+    case PN_ALT:
+        {
+            ruleset = ruleset_create(2);
+            assert(ruleset != NULL);
+            ruleset->rules[0] = symrefs_create(1);
+            assert(ruleset->rules[0] != NULL);
+            ruleset->rules[1] = symrefs_create(1);
+            assert(ruleset->rules[1] != NULL);
+            ruleset->rules[0]->refs[0] = pattern_to_grammar(node->left);
+            ruleset->rules[1]->refs[0] = pattern_to_grammar(node->right);
+        } break;
+
+    case PN_OPT:
+        {
+            ruleset = ruleset_create(2);
+            assert(ruleset != NULL);
+            ruleset->rules[0] = symrefs_create(0);
+            assert(ruleset->rules[0] != NULL);
+            ruleset->rules[1] = symrefs_create(1);
+            assert(ruleset->rules[1] != NULL);
+            ruleset->rules[1]->refs[0] = pattern_to_grammar(node->left);
+        } break;
+
+    default:
+        assert(false);
+    }
+
+    ruleset_sort(ruleset);
+
+    /* See if the rule set matches an existing symbol's rule set */
+    GrammarRuleSet **rulesets = AR_data(&ar_grammar);
+    size_t nruleset = AR_size(&ar_grammar), n;
+    for (n = 0; n < nruleset; ++n)
+        if (ruleset_cmp(rulesets[n], ruleset) == 0)
+            break;
+
+    if (n < nruleset)
+        ruleset_destroy(ruleset);
+    else
+        AR_push(&ar_grammar, &ruleset);
+
+    SymbolRef res = { SYM_NONTERMINAL, (int)n };
+    return res;
+}
+
+static bool parse_command(char *str, PatternNode **pattern)
+{
+    const char *end = str + strlen(str);
+    int verb, ent1, prep, ent2;
+    const char *p, *q, *r;
+
+    /* Resolve form 1: VERB */
+    verb = resolve_fragment(F_VERB, str, end);
+    if (verb >= 0)
+    {
+        *pattern = *(PatternNode**)AR_at(&ar_verbs, verb);
         return true;
     }
 
-    sep = str;
-    while (*sep) ++sep;
-    for (;;)
+    /* Resolve form 2: VERB ENTITY */
+    verb = ent1 = -1;
+    for (p = skip_word(str); *p != '\0'; p = skip_word(p))
     {
-        do --sep; while (sep > str && *sep != ' ');
-        if (sep <= str) break;
+        int v = resolve_fragment(F_VERB, str, p);
+        int e = resolve_fragment(F_ENTITY, p, end);
+        if (v < 0 || e < 0) continue;
 
-        *sep = '\0';
-        ok = ST_find(&st_fragments, str, &f_idx) &&
-             (f = AR_at(&ar_fragments, (long)f_idx))->type == F_VERB &&
-             parse_command2(sep + 1, command);
-        *sep = ' ';
+        verb = v;
+        ent1 = e;
+        // don't break here, so we find the longest matching verb
+    }
+    if (verb >= 0 && ent1 >= 0)
+    {
+        PatternNode *verb_node = *(PatternNode**)AR_at(&ar_verbs, verb);
+        PatternNode *ent1_node = *(PatternNode**)AR_at(&ar_ents,  ent1);
+        assert(verb_node != NULL);
+        assert(ent1_node != NULL);
+        *pattern = make_pattern_node(PN_SEQ, NULL, verb_node, ent1_node);
+        return true;
+    }
 
-        if (ok)
+    /* Resolve form 3: VERB ENTITY PREPOSITION ENTITY */
+    verb = ent1 = prep = ent2 = -1;
+    for (p = skip_word(str); *p != '\0'; p = skip_word(p))
+    {
+        int v = resolve_fragment(F_VERB, str, p);
+        if (v < 0) continue;
+
+        for (q = skip_word(p); *q != '\0'; q = skip_word(q))
         {
-            command->part[0] = f->id;
-            return true;
+            int e1 = resolve_fragment(F_ENTITY, p, q);
+            if (e1 < 0) continue;
+
+            for (r = skip_word(q); *r != '\0'; r = skip_word(r))
+            {
+                int p  = resolve_fragment(F_PREPOSITION, q, r);
+                int e2 = resolve_fragment(F_ENTITY, r, end);
+                if (p < 0 || e2 < 0) continue;
+
+                // Match found:
+                verb = v;
+                ent1 = e1;
+                prep = p;
+                ent2 = e2;
+                // don't break here, so we find the longest matching verb
+            }
         }
+    }
+    if (verb >= 0 && ent1 >= 0 && prep >= 0 && ent2 >= 0)
+    {
+        PatternNode *verb_node = *(PatternNode**)AR_at(&ar_verbs, verb);
+        PatternNode *ent1_node = *(PatternNode**)AR_at(&ar_ents,  ent1);
+        PatternNode *prep_node = *(PatternNode**)AR_at(&ar_preps, prep);
+        PatternNode *ent2_node = *(PatternNode**)AR_at(&ar_ents,  ent2);
+        assert(verb_node != NULL);
+        assert(ent1_node != NULL);
+        assert(prep_node != NULL);
+        assert(ent2_node != NULL);
+        PatternNode *a = make_pattern_node(PN_SEQ, NULL, verb_node, ent1_node);
+        PatternNode *b = make_pattern_node(PN_SEQ, NULL, prep_node, ent2_node);
+        *pattern = make_pattern_node(PN_SEQ, NULL, a, b);
+        return true;
     }
 
     return false;
@@ -483,18 +778,23 @@ static bool parse_command(char *str, Command *command)
 
 void begin_command(const char *str)
 {
-    char *fragment;
+    PatternNode *node = NULL;
     Command command;
 
-    fragment = strdup(str);
+    /* Normalize and then parse fragment */
+    char *fragment = strdup(str);
     normalize(fragment);
     assert(fragment != NULL);
-    if (!parse_command(fragment, &command))
+    if (!parse_command(fragment, &node))
     {
         fatal("Could not parse command \"%s\" on line %d.",
             fragment, lineno + 1);
     }
     free(fragment);
+    assert(node != NULL);
+
+    /* Convert fragment node to grammar rule */
+    command.symbol = pattern_to_grammar(node);
 
     /* Add partial command to command array */
     command.guard    = -1;
@@ -537,65 +837,6 @@ void end_command()
     }
 }
 
-void begin_verb()
-{
-    fragment.type  = F_VERB;
-    fragment.id    = num_verbs++;
-    fragment.canon = true;
-}
-
-void begin_preposition()
-{
-    fragment.type  = F_PREPOSITION;
-    fragment.id    = num_prepositions++;
-    fragment.canon = true;
-}
-
-void begin_entity()
-{
-    fragment.type  = F_ENTITY;
-    fragment.id    = num_entities++;
-    fragment.canon = true;
-}
-
-void add_synonym(const char *token)
-{
-    const void *idx = (void*)AR_size(&ar_fragments);
-    char *str = strdup(token);
-    normalize(str);
-    fragment.str = str;  /* will be re-allocated after ST_insert_entry() */
-    if (ST_insert_entry(&st_fragments, (const void**)&fragment.str, &idx))
-    {
-        fatal("Redeclaration of fragment \"%s\" on line %d.",
-            str, lineno + 1);
-    }
-    free(str);
-    AR_append(&ar_fragments, &fragment);
-
-    fragment.canon = false;  /* next fragment will be non-canonical */
-}
-
-int resolve_fragment(const char *token, int type)
-{
-    const void *f_idx;
-    const Fragment *f;
-    char *str = strdup(token);
-    normalize(str);
-    if (!ST_find(&st_fragments, str, &f_idx))
-    {
-        fatal("Reference to undeclared fragment \"%s\" on line %d.",
-            str, lineno + 1);
-    }
-    free(str);
-    f = AR_at(&ar_fragments, (long)f_idx);
-    if (type != -1 && type != (int)f->type)
-    {
-        fatal("Fragment referenced by \"%s\" has wrong type on line %d.",
-            str, lineno + 1);
-    }
-    return f->id;
-}
-
 void begin_call(const char *name, int nret)
 {
     int nargs = 0;
@@ -627,48 +868,6 @@ void bind_sym_ent_ref(const char *str)
         fatal("Attempt to rebind symbol %s on line %d.\n", str, lineno + 1);
     }
     return;
-}
-
-PatternNode *make_pattern_node(int type, const char *text,
-                               PatternNode *left, PatternNode *right)
-{
-    PatternNode *node = malloc(sizeof(PatternNode));
-    assert(node != NULL);
-    node->type = type;
-    node->text = (text == NULL) ? NULL : strdup(text);
-    node->left = left;
-    node->right = right;
-    return node;
-}
-
-void free_pattern_node(PatternNode *node)
-{
-    if (node != NULL)
-    {
-        free_pattern_node(node->left);
-        free_pattern_node(node->right);
-        free(node->text);
-        free(node);
-    }
-}
-
-FragmentList *make_fragment_list(FragmentList *next, const char *text)
-{
-    FragmentList *list = malloc(sizeof(FragmentList));
-    assert(list != NULL);
-    list->next = next;
-    list->text = (text == NULL) ? NULL : strdup(text);
-    return list;
-}
-
-void free_fragment_list(FragmentList *list)
-{
-    if (list != NULL)
-    {
-        free_fragment_list(list->next);
-        free(list->text);
-        free(list);
-    }
 }
 
 void pattern_push(const char *str)
@@ -704,99 +903,178 @@ void pattern_opt()
         make_pattern_node(PN_OPT, NULL, left, NULL);
 }
 
-static char *join_fragments(const char *s, const char *t)
+void add_synonyms()
 {
-    if (s == NULL && t == NULL) return NULL;
-    if (s == NULL) return strdup(t);
-    if (t == NULL) return strdup(s);
-
-    /* Join strings with a space in between */
-    size_t len = strlen(s) + strlen(t) + 2;
-    char *res = malloc(len);
-    assert(res != NULL);
-    snprintf(res, len, "%s %s", s, t);
-    return res;
+    assert(pattern_stack_size == 1);
+    add_synonym(pattern_stack[--pattern_stack_size]);
 }
 
-static bool fragments_contains_null(FragmentList *list)
+PatternNode *frag_make_words(char *text)
 {
-    for ( ; list != NULL; list = list->next)
+    char *p = strchr(text, ' ');
+    if (p == NULL)
     {
-        if (list->text == NULL)
-            return true;
+        return make_pattern_node(PN_WORD, text, NULL, NULL);
     }
-    return false;
+    else
+    {
+        *p = '\0';
+        return make_pattern_node( PN_SEQ, NULL,
+                                  make_pattern_node(PN_WORD, text, NULL, NULL),
+                                  frag_make_words(p + 1) );
+    }
 }
 
-FragmentList *pattern_to_fragments(PatternNode *node)
+PatternNode *pattern_make_words(PatternNode *node)
 {
     switch (node->type)
     {
     case PN_FRAG:
         {
-            return make_fragment_list(NULL, node->text);
+            normalize(node->text);
+            PatternNode *res = frag_make_words(node->text);
+            free_pattern_node(node);
+            return res;
         }
+        break;
+
+    case PN_SEQ:
+        node->left  = pattern_make_words(node->left);
+        node->right = pattern_make_words(node->right);
+        return node;
+
+    case PN_ALT:
+        node->left  = pattern_make_words(node->left);
+        node->right = pattern_make_words(node->right);
+        return node;
+
+    case PN_OPT:
+        node->left = pattern_make_words(node->left);
+        assert(node->right == NULL);
+        return node;
+
+    case PN_WORD:
+        return node;
+
+    default:
+        assert(false);
+    }
+}
+
+PatternNode *pattern_remove_opts(PatternNode *node, bool *empty)
+{
+    switch (node->type)
+    {
+    case PN_FRAG:
+    case PN_WORD:
+        *empty = false;
+        return node;
 
     case PN_SEQ:
         {
-            FragmentList *a, *b, *i, *j,*r = NULL;
-            a = pattern_to_fragments(node->left);
-            b = pattern_to_fragments(node->right);
-            for (i = a; i != NULL; i = i->next)
+            PatternNode *v, *w;
+            bool p, q;
+            v = pattern_remove_opts(node->left, &p);
+            w = pattern_remove_opts(node->right, &q);
+            node->left = node->right = NULL;
+            free_pattern_node(node);
+
+            PatternNode *res = NULL;
+            if (!p && !q)
             {
-                for (j = b; j != NULL; j = j->next)
-                {
-                    char *text = join_fragments(i->text, j->text);
-                    r = make_fragment_list(r, text);
-                    free(text);
-                }
+                *empty = false;
+                res = make_pattern_node(PN_SEQ, NULL, v, w);
             }
-            free_fragment_list(a);
-            free_fragment_list(b);
-            return r;
+            else
+            if (!p && q)
+            {
+                *empty = false;
+                res = make_pattern_node( PN_ALT, NULL,
+                        clone_pattern_node(v),
+                        make_pattern_node(PN_SEQ, NULL, v, w) );
+            }
+            else
+            if (p && !q)
+            {
+                *empty = false;
+                res = make_pattern_node( PN_ALT, NULL,
+                        make_pattern_node(PN_SEQ, NULL, v, w),
+                        clone_pattern_node(w) );
+            }
+            else
+            if (p && q)
+            {
+                *empty = true;
+                res = make_pattern_node( PN_ALT, NULL,
+                        clone_pattern_node(v),
+                        make_pattern_node( PN_ALT, NULL,
+                            clone_pattern_node(w),
+                            make_pattern_node(PN_SEQ, NULL, v, w) ) );
+            }
+            assert(res != NULL);
+            return res;
         }
 
     case PN_ALT:
         {
-            FragmentList *a, *b, **p;
-            a = pattern_to_fragments(node->left);
-            b = pattern_to_fragments(node->right);
-            p = &a;
-            while (*p != NULL) p = &(*p)->next;
-            *p = b;
-            return a;
+            PatternNode *v, *w;
+            bool p, q;
+            v = pattern_remove_opts(node->left, &p);
+            w = pattern_remove_opts(node->right, &q);
+            node->left = node->right = NULL;
+            free_pattern_node(node);
+            *empty = p || q;
+            PatternNode *res = make_pattern_node(PN_ALT, NULL, v, w);
+            return res;
         }
 
     case PN_OPT:
         {
-            FragmentList *a = pattern_to_fragments(node->left);
-            return fragments_contains_null(a) ? a : make_fragment_list(a, NULL);
-        } break;
+            assert(node->right == NULL);
+            bool dummy;
+            PatternNode *res = pattern_remove_opts(node->left, &dummy);
+            node->left = NULL;
+            free_pattern_node(node);
+            *empty = true;
+            return res;
+        }
+
+    default:
+        assert(false);
     }
-    return NULL;
 }
 
-void add_synonyms()
+PatternNode *pattern_normalize(PatternNode *node)
 {
-    assert(pattern_stack_size == 1);
-    PatternNode *root = pattern_stack[--pattern_stack_size];
-    FragmentList *all = pattern_to_fragments(root);
-    if (fragments_contains_null(all))
-    {
-        fatal("Fragment pattern on line %d matches empty strings!\n",
-            lineno + 1);
-    }
-
-    FragmentList *p;
-    for (p = all; p != NULL; p = p->next)
-    {
-        add_synonym(p->text);
-    }
-    free_pattern_node(root);
-    free_fragment_list(all);
+    node = pattern_make_words(node);
+    return node;
 }
 
-static bool write_alio_header(IOStream *ios)
+/* Writes an IFF chunk header, consisting of a four-byte type identifier,
+   followed by the 32-bit chunk size (including the chunk header) */
+static bool chunk_begin(IOStream *ios, const char *type, size_t size)
+{
+    assert(strlen(type) == 4);
+    return
+        write_int8(ios, type[0]) &&
+        write_int8(ios, type[1]) &&
+        write_int8(ios, type[2]) &&
+        write_int8(ios, type[3]) &&
+        write_int32(ios, (int)size);
+}
+
+/* Terminates an IFF chunk header, by padding to a 2-byte boundary. */
+static bool chunk_end(IOStream *ios, size_t size)
+{
+    return (size&1) ? write_int8(ios, 0) : true;
+}
+
+static size_t get_MOD_chunk_size()
+{
+    return 20;
+}
+
+static bool write_MOD_chunk(IOStream *ios, size_t chunk_size)
 {
     int init_func = -1;
     const void *init_idx;
@@ -804,151 +1082,93 @@ static bool write_alio_header(IOStream *ios)
         init_func = (long)init_idx;
 
     return
-        write_int32(ios, 32) &&      /* header size: 32 bytes */
+        chunk_begin(ios, "MOD ", chunk_size) &&
         write_int16(ios, 0x0100) &&  /* file version: 1.0 */
         write_int16(ios, 0) &&       /* reserved */
-        write_int32(ios, num_verbs) &&
-        write_int32(ios, num_prepositions) &&
+        write_int32(ios, AR_size(&ar_vars)) &&
         write_int32(ios, num_entities) &&
         write_int32(ios, AR_size(&ar_properties)) &&
-        write_int32(ios, AR_size(&ar_vars)) &&
-        write_int32(ios, init_func);
+        write_int32(ios, init_func) &&
+        chunk_end(ios, chunk_size);
 }
 
-static int cmp_fragments(const void *a, const void *b)
+/* Returns size of a string table chunk (either STR or WRD chunk) */
+static size_t get_string_chunk_size(Array *ar)
 {
-    const Fragment *f = a, *g =b;
-    int d = strcmp(f->str, g->str);
-    if (d == 0) d = f->type - f->type;
-    if (d == 0) d = g->id - g->id;
-    return d;
+    size_t nstr = AR_size(ar);
+    char **strs = (char**)AR_data(ar);
+    size_t chunk_size = 4, n;
+    for (n = 0; n < nstr; ++n)
+        chunk_size += strlen(strs[n]) + 1;
+    return chunk_size;
 }
 
-static bool write_alio_fragments(IOStream *ios)
+/* Writes a string table chunk (either STR or WRD chunk) */
+static size_t write_string_chunk(IOStream *ios, size_t chunk_size,
+                                 Array *ar, const char *type)
 {
-    int table_size, offset;
-    Fragment *fragments;
-    int nfragment, n, padding;
-
-    nfragment = (int)AR_size(&ar_fragments);
-    fragments = (Fragment*)AR_data(&ar_fragments);
-
-    /* Sort fragments */
-    qsort(fragments, nfragment, sizeof(Fragment), &cmp_fragments);
-
-    /* Compute size of table. */
-    table_size = 8 + 8*nfragment;
-    for (n = 0; n < nfragment; ++n)
-        table_size += strlen(fragments[n].str) + 1;
-    padding = 0;
-    while ((table_size + padding)%4 != 0)
-        ++padding;
-
-    if (!write_int32(ios, table_size + padding) || !write_int32(ios, nfragment))
+    if (!chunk_begin(ios, type, chunk_size))
         return false;
 
-    /* Write fragment headers */
-    offset = 8 + 8*nfragment;
-    for (n = 0; n < nfragment; ++n)
-    {
-        int flags_type = fragments[n].type;
-        if (fragments[n].canon) flags_type |= 0x10;
-        if (!write_int8(ios, flags_type) ||
-            !write_int24(ios, fragments[n].id) ||
-            !write_int32(ios, offset))
-            return false;
-        offset += strlen(fragments[n].str) + 1;
-    }
-
-    /* Write fragment strings */
-    for (n = 0; n < nfragment; ++n)
-        if (!write_data(ios, fragments[n].str, strlen(fragments[n].str) + 1))
-            return false;
-
-    /* Write padding */
-    for (n = 0; n < padding; ++n)
-        if (!write_int8(ios, 0))
-            return false;
-
-    return true;
-}
-
-static bool write_alio_strings(IOStream *ios)
-{
-    int table_size, offset;
-    char **strings;
-    int nstring, n, padding;
-
-    nstring = (int)AR_size(&ar_strings);
-    strings = (char**)AR_data(&ar_strings);
-
-    /* Compute size of table. */
-    table_size = 8 + 4*nstring;
-    for (n = 0; n < nstring; ++n)
-        table_size += strlen(strings[n]) + 1;
-    padding = 0;
-    while ((table_size + padding)%4 != 0)
-        ++padding;
-
-    if (!write_int32(ios, table_size + padding) || !write_int32(ios, nstring))
+    size_t nstr = AR_size(ar), n;
+    if (!write_int32(ios, (int)nstr))
         return false;
 
-    /* Write offsets */
-    offset = 8 + 4*nstring;
-    for (n = 0; n < nstring; ++n)
-    {
-        if (!write_int32(ios, offset))
-            return false;
-        offset += strlen(strings[n]) + 1;
-    }
-
-    /* Write strings */
-    for (n = 0; n < nstring; ++n)
-        if (!write_data(ios, strings[n], strlen(strings[n]) + 1))
+    char **strs = (char**)AR_data(ar);
+    for (n = 0; n < nstr; ++n)
+        if (!write_data(ios, strs[n], strlen(strs[n]) + 1))
             return false;
 
-    /* Write padding */
-    for (n = 0; n < padding; ++n)
-        if (!write_int8(ios, 0))
-            return false;
-
-    return true;
+    return chunk_end(ios, chunk_size);
 }
 
-static bool write_alio_functions(IOStream *ios)
+static size_t get_STR_chunk_size()
 {
-    int table_size, offset;
-    Function *functions;
-    int n, i, nfunction;
+    return get_string_chunk_size(&ar_strings);
+}
 
-    functions = (Function*)AR_data(&ar_functions);
-    nfunction = AR_size(&ar_functions);
+static bool write_STR_chunk(IOStream *ios, size_t chunk_size)
+{
+    return write_string_chunk(ios, chunk_size, &ar_strings, "STR ");
+}
 
-    /* Compute size of table. */
-    table_size = 8 + 8*nfunction;
+static size_t get_FUN_chunk_size()
+{
+    size_t nfunction = AR_size(&ar_functions);
+    Function *functions = (Function*)AR_data(&ar_functions);
+    size_t table_size = 4 + 4*nfunction, n;
     for (n = 0; n < nfunction; ++n)
         table_size += 4*(functions[n].ninstr + 1);
+    return table_size;
+}
 
-    if (!write_int32(ios, table_size) || !write_int32(ios, nfunction))
+static bool write_FUN_chunk(IOStream *ios, size_t chunk_size)
+{
+    if (!chunk_begin(ios, "FUN ", chunk_size))
+        return false;
+
+    Function *functions = (Function*)AR_data(&ar_functions);
+    size_t nfunction = AR_size(&ar_functions), n, i;
+
+    if (!write_int32(ios, (int)nfunction))
         return false;
 
     /* Write function headers */
-    offset = 8 + 8*nfunction;
     for (n = 0; n < nfunction; ++n)
     {
         if (!write_int16(ios, 0) ||
             !write_int8(ios, functions[n].nret) ||
-            !write_int8(ios, functions[n].nparam) ||
-            !write_int32(ios, offset))
+            !write_int8(ios, functions[n].nparam))
+        {
             return false;
-        offset += 4*(functions[n].ninstr + 1);
+        }
     }
 
     /* Write function instructions */
     for (n = 0; n < nfunction; ++n)
     {
         Instruction *ins = functions[n].instrs;
-        for (i = 0; i < functions[n].ninstr; ++i)
+        for (i = 0; (int)i < functions[n].ninstr; ++i)
         {
             assert(ins[i].opcode == (ins[i].opcode&255));
             assert(ins[i].argument >= -0x00800000 && ins[i].argument <= 0x007fffff);
@@ -960,67 +1180,160 @@ static bool write_alio_functions(IOStream *ios)
             return false;
     }
 
+    return chunk_end(ios, chunk_size);
+}
+
+static size_t get_WRD_chunk_size()
+{
+    return get_string_chunk_size(&ar_words);
+}
+
+static bool write_WRD_chunk(IOStream *ios, size_t chunk_size)
+{
+    return write_string_chunk(ios, chunk_size, &ar_words, "WRD ");
+}
+
+/* Returns total number of non-terminal symbols. */
+static int get_num_nonterm()
+{
+    return (int)AR_size(&ar_grammar);
+}
+
+/* Returns total number of symbol refs in grammar table. */
+static int get_num_symrefs()
+{
+    int cnt = 0;
+    GrammarRuleSet **rulesets = AR_data(&ar_grammar);
+    size_t nruleset = AR_size(&ar_grammar), n, m;
+    for (n = 0; n < nruleset; ++n)
+        for (m = 0; m < rulesets[n]->nrule; ++m)
+            cnt += rulesets[n]->rules[m]->nref;
+    return cnt;
+}
+
+/* Returns total number of rules in grammar table. */
+static int get_num_rules()
+{
+    int cnt = 0;
+    GrammarRuleSet **rulesets = AR_data(&ar_grammar);
+    size_t nruleset = AR_size(&ar_grammar), n;
+    for (n = 0; n < nruleset; ++n)
+        cnt += rulesets[n]->nrule;
+    return cnt;
+}
+
+static size_t get_GRM_chunk_size()
+{
+    return 12 + 4*get_num_nonterm() + 4*get_num_rules() + 4*get_num_symrefs();
+}
+
+static bool write_grammar_symbol(IOStream *ios, SymbolRef *ref)
+{
+    switch (ref->type)
+    {
+    case SYM_NONE:
+        return write_int32(ios, 0);
+
+    case SYM_TERMINAL:
+        return write_int32(ios, -1 - ref->index);
+
+    case SYM_NONTERMINAL:
+        return write_int32(ios,  1 + ref->index);
+
+    default:
+        assert(false);
+    }
+}
+
+static bool write_grammar_rule(IOStream *ios, SymbolRefList *rule)
+{
+    if (!write_int32(ios, rule->nref))
+        return false;
+    size_t n;
+    for (n = 0; n < rule->nref; ++n)
+        if (!write_grammar_symbol(ios, &rule->refs[n]))
+            return false;
     return true;
 }
 
-static int cmp_commands(const void *a, const void *b)
+static bool write_GRM_chunk(IOStream *ios, size_t chunk_size)
 {
-    const Command *c = a, *d =b;
-    if (c->form    - d->form    != 0) return c->form    - d->form;
-    if (c->part[0] - d->part[0] != 0) return c->part[0] - d->part[0];
-    if (c->part[1] - d->part[1] != 0) return c->part[1] - d->part[1];
-    if (c->part[2] - d->part[2] != 0) return c->part[2] - d->part[2];
-    if (c->part[3] - d->part[3] != 0) return c->part[3] - d->part[3];
-    return 0;
+    if (!chunk_begin(ios, "GRM ", chunk_size) ||
+        !write_int32(ios, get_num_nonterm()) ||
+        !write_int32(ios, get_num_rules()) ||
+        !write_int32(ios, get_num_symrefs()))
+        return false;
+
+    GrammarRuleSet **rulesets = AR_data(&ar_grammar);
+    size_t nruleset = AR_size(&ar_grammar), n, m;
+    for (n = 0; n < nruleset; ++n)
+    {
+        if (!write_int32(ios, (int)rulesets[n]->nrule))
+            return false;
+        for (m = 0; m < rulesets[n]->nrule; ++m)
+        {
+            if (!write_grammar_rule(ios, rulesets[n]->rules[m]))
+                return false;
+        }
+    }
+    return chunk_end(ios, chunk_size);
 }
 
-static bool write_alio_commands(IOStream *ios)
+static size_t get_CMD_chunk_size()
 {
-    int ncommand, total_args, n, m;
-    int form_to_nargs[3] = { 1, 2, 4 };
-    Command *commands;
+    return 8 + 12*AR_size(&ar_commands);
+}
 
-    commands = AR_data(&ar_commands);
-    ncommand = AR_size(&ar_commands);
-
-    /* Sort commands */
-    qsort(commands, ncommand, sizeof(Command), &cmp_commands);
-
-    /* Compute and write command table size */
-    total_args = 0;
-    for (n = 0; n < ncommand; ++n)
-        total_args += form_to_nargs[commands[n].form];
-    if (!write_int32(ios, 8 + 12*ncommand + 4*total_args))
+static bool write_CMD_chunk(IOStream *ios, size_t chunk_size)
+{
+    if (!chunk_begin(ios, "CMD ", chunk_size))
         return false;
 
-    /* Write all commands */
-    if (!write_int32(ios, ncommand))
+    Command *commands = AR_data(&ar_commands);
+    size_t ncommand = AR_size(&ar_commands);
+
+    if (!write_int32(ios, 1) || !write_int32(ios, (int)ncommand))
         return false;
+
+    size_t n;
     for (n = 0; n < ncommand; ++n)
     {
-        if (!write_int16(ios, commands[n].form)) return false;
-        if (!write_int16(ios, form_to_nargs[commands[n].form])) return false;
-        for (m = 0; m < form_to_nargs[commands[n].form]; ++m)
-        {
-            if (!write_int32(ios, commands[n].part[m])) return false;
-        }
-        if (!write_int32(ios, commands[n].guard)) return false;
-        if (!write_int32(ios, commands[n].function)) return false;
+        if (!write_grammar_symbol(ios, &commands[n].symbol) ||
+            !write_int32(ios, commands[n].guard) ||
+            !write_int32(ios, commands[n].function))
+            return false;
     }
 
-    return true;
+    return chunk_end(ios, chunk_size);
 }
 
 static bool write_alio(IOStream *ios)
 {
-    if (!write_data(ios, "alio", 4))
-        return false;
+    int MOD_size = get_MOD_chunk_size();
+    int STR_size = get_STR_chunk_size();
+    int FUN_size = get_FUN_chunk_size();
+    int WRD_size = get_WRD_chunk_size();
+    int GRM_size = get_GRM_chunk_size();
+    int CMD_size = get_CMD_chunk_size();
 
-    return write_alio_header(ios) &&
-           write_alio_fragments(ios) &&
-           write_alio_strings(ios) &&
-           write_alio_functions(ios) &&
-           write_alio_commands(ios);
+    size_t FRM_size = 4;
+    FRM_size += 8 + MOD_size + (MOD_size&1);
+    FRM_size += 8 + STR_size + (STR_size&1);
+    FRM_size += 8 + FUN_size + (FUN_size&1);
+    FRM_size += 8 + WRD_size + (WRD_size&1);
+    FRM_size += 8 + GRM_size + (GRM_size&1);
+    FRM_size += 8 + CMD_size + (CMD_size&1);
+
+    return
+        chunk_begin(ios, "FORM", FRM_size) &&
+        write_data(ios, "ALI ", 4) &&
+        write_MOD_chunk(ios, MOD_size) &&
+        write_STR_chunk(ios, STR_size) &&
+        write_FUN_chunk(ios, FUN_size) &&
+        write_WRD_chunk(ios, WRD_size) &&
+        write_GRM_chunk(ios, GRM_size) &&
+        write_CMD_chunk(ios, CMD_size) &&
+        chunk_end(ios, FRM_size);
 }
 
 void create_object_file()
@@ -1072,8 +1385,9 @@ void parser_destroy()
     AR_destroy(&ar_strings);
     ST_destroy(&st_strings);
     ST_destroy(&st_symbols);
-    AR_destroy(&ar_fragments);
-    ST_destroy(&st_fragments);
+    AR_destroy(&ar_verbs);
+    AR_destroy(&ar_ents);
+    AR_destroy(&ar_preps);
     while (!AR_empty(&ar_functions))
     {
         Function *f = AR_last(&ar_functions);

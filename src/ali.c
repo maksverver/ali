@@ -134,6 +134,36 @@ static void filter_output(char *buf)
     *out = '\0';
 }
 
+#ifdef WITH_GLK
+
+/* Convert UTF-8 sequence to corresponding Latin-1 characters; unsupported
+   characters are silently removed. */
+static void utf8_to_latin1(char *in)
+{
+    char *out = in;
+    while (*in)
+    {
+        if ((*in & 0x80) == 0)
+        {
+            *out++ = *in++; // copy single-byte character
+        }
+        else
+        {
+            if ((*in & 0xe0) == 0xc0) // decode two-byte character
+            {
+                int ch = ((in[0] & 0x1f) << 6) | (in[1] & 0x3f);
+                in += 2;
+                if (ch < 256) *out++ = ch;
+            }
+            /* in principle we should decode three and four byte encodings too,
+               but in practice these are rarely used for latin-1 characters. */
+        }
+    }
+    *out = '\0';
+}
+
+#else
+
 /* Ensures lines consist of at most line_width characters (not counting newline
    characters, so a 80-character line consists of 81 characters in total).
    Formatting characters are ignored. */
@@ -175,31 +205,7 @@ static void line_wrap_output(char *buf, int line_width)
     }
 }
 
-/* Convert UTF-8 sequence to corresponding Latin-1 characters; unsupported
-   characters are silently removed. */
-static void utf8_to_latin1(char *in)
-{
-    char *out = in;
-    while (*in)
-    {
-        if ((*in & 0x80) == 0)
-        {
-            *out++ = *in++; // copy single-byte character
-        }
-        else
-        {
-            if ((*in & 0xe0) == 0xc0) // decode two-byte character
-            {
-                int ch = ((in[0] & 0x1f) << 6) | (in[1] & 0x3f);
-                in += 2;
-                if (ch < 256) *out++ = ch;
-            }
-            /* in principle we should decode three and four byte encodings too,
-               but in practice these are rarely used for latin-1 characters. */
-        }
-    }
-    *out = '\0';
-}
+#endif /* ndef WITH_GLK */
 
 static void set_prompt()
 {
@@ -295,6 +301,7 @@ static void write_fmt(const char *format, ...)
     return write_str(buf);
 }
 
+/*
 static const char *get_string_var(Interpreter *I, int var, const char *def)
 {
     if (var < 0 || var >= I->vars->nval)
@@ -304,6 +311,7 @@ static const char *get_string_var(Interpreter *I, int var, const char *def)
         return def;
     return I->mod->strings[str];
 }
+*/
 
 static void process_output(Interpreter *I)
 {
@@ -619,6 +627,8 @@ int main(int argc, char *argv[])
 #endif /* ndef WITH_GLK */
 
 #ifdef WITH_GARGLK
+void gli_startup(int argc, char *argv[]);
+
 int main(int argc, char *argv[])
 {
     if (argc > 1)
